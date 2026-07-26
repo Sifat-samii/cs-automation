@@ -44,7 +44,7 @@ model AuditEvent {
   occurredAt    DateTime @default(now()) @db.Timestamptz(6)
   correlationId String   @db.Uuid
   actorUserId   String?  @db.Uuid
-  actor         User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  actor         User?    @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
   actorLabel    String
   action        String
   entityType    String

@@ -1083,7 +1083,7 @@ model AuditEvent {
   occurredAt    DateTime @default(now()) @db.Timestamptz(6)
   correlationId String   @db.Uuid
   actorUserId   String?  @db.Uuid
-  actor         User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  actor         User?    @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
   actorLabel    String
   action        String
   entityType    String
@@ -1096,7 +1096,10 @@ model AuditEvent {
 }
 ```
 
-`actorLabel` is denormalised on purpose. If a user record is later removed, `actorUserId` becomes null but the audit trail still records who acted, which is the entire point of keeping it.
+`actorLabel` is denormalised on purpose, and audited users are soft-deactivated rather than
+physically deleted. `onDelete: Restrict` is required because PostgreSQL implements `SET NULL` as an
+update, which the append-only trigger correctly refuses. This keeps both `actorUserId` and
+`actorLabel` immutable.
 
 - [ ] **Step 4: Generate the migration**
 
@@ -1765,7 +1768,7 @@ describe("recordAudit", () => {
     expect(unchanged.displayName).toBe("Test Lead");
   });
 
-  it("preserves the actor label after the user is deleted", async () => {
+  it("refuses deleting an audited actor and preserves its identity", async () => {
     const user = await makeUser();
     await recordAudit(prisma, {
       correlationId,
@@ -1776,10 +1779,12 @@ describe("recordAudit", () => {
       entityId: user.id,
     });
 
-    await prisma.user.delete({ where: { id: user.id } });
+    await expect(prisma.user.delete({ where: { id: user.id } })).rejects.toThrow(
+      /foreign key constraint/i,
+    );
 
     const event = await prisma.auditEvent.findFirstOrThrow();
-    expect(event.actorUserId).toBeNull();
+    expect(event.actorUserId).toBe(user.id);
     expect(event.actorLabel).toBe("lead@example.com");
   });
 });
@@ -1795,7 +1800,7 @@ Expected: FAIL — cannot resolve `./audit.js`.
 - [ ] **Step 7: Implement `audit.ts`**
 
 ```typescript
-import type { DbClient } from "@cs/db";
+import type { DbClient, Prisma } from "@cs/db";
 
 export type AuditInput = {
   correlationId: string;
@@ -1809,15 +1814,23 @@ export type AuditInput = {
 
 const SENSITIVE_KEY = /pass|secret|token|authorization|credential|cookie|hash/i;
 
-function redact(metadata: Record<string, unknown>): Record<string, unknown> {
-  const output: Record<string, unknown> = {};
+function toJsonValue(value: unknown): Prisma.InputJsonValue | null {
+  if (value === null) return null;
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (Array.isArray(value)) return value.map(toJsonValue);
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "object") return redact(value as Record<string, unknown>);
+  return null;
+}
+
+function redact(metadata: Record<string, unknown>): Prisma.InputJsonObject {
+  const output: Record<string, Prisma.InputJsonValue | null> = {};
   for (const [key, value] of Object.entries(metadata)) {
     if (SENSITIVE_KEY.test(key)) {
       output[key] = "[redacted]";
-    } else if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-      output[key] = redact(value as Record<string, unknown>);
     } else {
-      output[key] = value;
+      output[key] = toJsonValue(value);
     }
   }
   return output;
