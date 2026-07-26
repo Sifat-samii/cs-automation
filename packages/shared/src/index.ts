@@ -4,3 +4,13 @@ export type { ServerEnv } from "./env.js";
 export { signRequest, verifyRequest } from "./hmac.js";
 export type { VerifyResult } from "./hmac.js";
 export { hashPassword, verifyPassword } from "./password.js";
+export {
+  PathBudgetError,
+  PathTraversalError,
+  assertPathBudget,
+  buildOrderCode,
+  buildOrderFolderName,
+  joinUncPath,
+  sanitisePathSegment,
+  toExtendedLengthPath,
+} from "./paths.js";
