@@ -7,28 +7,28 @@ todos:
     status: completed
   - id: p1-paths
     content: "Phase 1 Task 1.1: path sanitisation, order code, folder name, extended-length UNC, and MAX_PATH budget checks in packages/shared"
-    status: pending
+    status: completed
   - id: p1-lifecycle
     content: "Phase 1 Task 1.2: order and batch state machines with Prisma enum parity test"
-    status: pending
+    status: completed
   - id: p1-schema
     content: "Phase 1 Task 1.3: Client, ClientIdentity, Order, OrderBatch, SourceLink, OrderEvent schema with append-only trigger"
-    status: pending
+    status: completed
   - id: p1-clients
     content: "Phase 1 Task 1.4: client registry service with email and domain resolution and unbound folder listing"
-    status: pending
+    status: completed
   - id: p1-create
     content: "Phase 1 Task 1.5: transactional order creation with collision-safe per-client daily sequencing"
-    status: pending
+    status: completed
   - id: p1-batches
     content: "Phase 1 Task 1.6: batch management, lifecycle transitions, and ETA handling"
-    status: pending
+    status: completed
   - id: p1-ui
     content: "Phase 1 Task 1.7: manual client and order UI with loading, empty, and error states and server-side role checks"
-    status: pending
+    status: completed
   - id: p1-verify
     content: "Phase 1 Task 1.8: verification, docs update, pull request into develop"
-    status: pending
+    status: completed
   - id: p2-gate
     content: "Phase 2 entry gate: run the copy benchmark, provision the UNC service account, decide on Dropbox and Drive credentials"
     status: pending
