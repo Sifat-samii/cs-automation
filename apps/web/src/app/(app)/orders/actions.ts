@@ -11,6 +11,16 @@ import { assertCan } from "@/lib/auth/rbac";
 import { addBatch } from "@/lib/orders/batches";
 import { createOrder } from "@/lib/orders/create";
 import { setBatchStatus, setEta, setOrderStatus } from "@/lib/orders/lifecycle";
+import {
+  approveOutboundEmail,
+  OutboundCopyGateError,
+  OutboundStateError,
+} from "@/lib/outbound/service";
+import {
+  confirmManualDropAndRetry,
+  retryBatchTransfer,
+  startBatchTransfer,
+} from "@/lib/agent/control";
 
 const optionalPositiveInteger = z.preprocess(
   (value) => (value === "" || value === null ? undefined : Number(value)),
@@ -61,6 +71,16 @@ const etaSchema = z.object({
 });
 
 export type OrderActionState = { error: string | null };
+
+const transferControlSchema = z.object({
+  orderId: z.uuid(),
+  batchId: z.uuid(),
+});
+
+const outboundApprovalSchema = z.object({
+  orderId: z.uuid(),
+  outboundEmailId: z.uuid(),
+});
 
 async function requireOrderWriter() {
   const user = await requireUser();
@@ -266,5 +286,113 @@ export async function setEtaAction(
 
   revalidatePath(`/orders/${parsed.data.orderId}`);
   revalidatePath("/orders");
+  return { error: null };
+}
+
+async function transferControlInput(formData: FormData) {
+  const user = await requireOrderWriter();
+  const parsed = transferControlSchema.safeParse({
+    orderId: formData.get("orderId"),
+    batchId: formData.get("batchId"),
+  });
+  return { user, parsed };
+}
+
+export async function startTransferAction(
+  _previous: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  const { user, parsed } = await transferControlInput(formData);
+  if (!parsed.success) return { error: "The transfer request is invalid." };
+  try {
+    await startBatchTransfer(prisma, {
+      batchId: parsed.data.batchId,
+      actor: { userId: user.userId, label: user.displayName },
+      correlationId: randomUUID(),
+    });
+  } catch {
+    return { error: "Only a new pending batch can be started." };
+  }
+  revalidatePath(`/orders/${parsed.data.orderId}`);
+  return { error: null };
+}
+
+export async function retryTransferAction(
+  _previous: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  const { user, parsed } = await transferControlInput(formData);
+  if (!parsed.success) return { error: "The retry request is invalid." };
+  try {
+    await retryBatchTransfer(prisma, {
+      batchId: parsed.data.batchId,
+      actor: { userId: user.userId, label: user.displayName },
+      correlationId: randomUUID(),
+    });
+  } catch {
+    return { error: "Only a failed batch can be retried." };
+  }
+  revalidatePath(`/orders/${parsed.data.orderId}`);
+  return { error: null };
+}
+
+export async function confirmManualDropAction(
+  _previous: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  const { user, parsed } = await transferControlInput(formData);
+  if (!parsed.success) return { error: "The manual-drop request is invalid." };
+  try {
+    const env = parseServerEnv(process.env);
+    await confirmManualDropAndRetry(prisma, {
+      batchId: parsed.data.batchId,
+      actor: { userId: user.userId, label: user.displayName },
+      correlationId: randomUUID(),
+      stagingRoot: env.STAGING_ROOT,
+    });
+  } catch {
+    return { error: "Manual drop can be confirmed only after a permanent download failure." };
+  }
+  revalidatePath(`/orders/${parsed.data.orderId}`);
+  return { error: null };
+}
+
+export async function approveOutboundEmailAction(
+  _previous: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  const user = await requireOrderWriter();
+  const parsed = outboundApprovalSchema.safeParse({
+    orderId: formData.get("orderId"),
+    outboundEmailId: formData.get("outboundEmailId"),
+  });
+  if (!parsed.success) return { error: "The outbound draft selection is invalid." };
+
+  try {
+    const outbound = await prisma.outboundEmail.findFirst({
+      where: {
+        id: parsed.data.outboundEmailId,
+        orderId: parsed.data.orderId,
+      },
+      select: { id: true },
+    });
+    if (!outbound) return { error: "The outbound draft does not belong to this order." };
+    await approveOutboundEmail(prisma, {
+      outboundEmailId: outbound.id,
+      approvedById: user.userId,
+    });
+  } catch (error) {
+    if (error instanceof OutboundCopyGateError) {
+      return {
+        error:
+          "Approval is blocked until owner-approved client email copy replaces the placeholder.",
+      };
+    }
+    if (error instanceof OutboundStateError) {
+      return { error: error.message };
+    }
+    return { error: "The outbound email could not be approved." };
+  }
+  revalidatePath(`/orders/${parsed.data.orderId}`);
   return { error: null };
 }

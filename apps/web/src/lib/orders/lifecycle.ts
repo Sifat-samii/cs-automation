@@ -7,6 +7,7 @@ import {
 } from "@cs/shared";
 import { recordAudit } from "@/lib/audit";
 import type { OrderMutationActor } from "@/lib/orders/create";
+import { draftEtaNoticeAfterSetEta } from "@/lib/outbound/verified";
 
 type MutationContext = {
   actor: OrderMutationActor;
@@ -95,10 +96,20 @@ export async function setBatchStatus(db: PrismaClient, input: SetBatchStatusInpu
   return db.$transaction(async (transaction) => {
     const batch = await transaction.orderBatch.findUnique({
       where: { id: input.batchId },
-      select: { id: true, orderId: true, status: true },
+      select: {
+        id: true,
+        orderId: true,
+        status: true,
+        _count: { select: { transferJobs: true } },
+      },
     });
     if (!batch) {
       throw new Error("Order batch does not exist");
+    }
+    if (batch._count.transferJobs > 0) {
+      throw new Error(
+        "Manual batch status changes are disabled after the transfer pipeline is queued",
+      );
     }
 
     assertBatchTransition(batch.status, input.status);
@@ -216,6 +227,11 @@ export async function setEta(db: PrismaClient, input: SetEtaInput) {
         eta,
         ...(note ? { note } : {}),
       },
+    });
+    await draftEtaNoticeAfterSetEta(transaction, {
+      orderId: order.id,
+      previousStatus: order.status,
+      eta: input.eta,
     });
 
     return updated;

@@ -16,7 +16,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["packages/**/src/**/*.test.ts", "apps/web/src/**/*.test.ts"],
+    include: ["packages/**/src/**/*.test.ts", "apps/**/src/**/*.test.ts"],
     fileParallelism: false,
     setupFiles: ["./vitest.setup.ts"],
   },

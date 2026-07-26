@@ -5,6 +5,6 @@ export async function resetDatabase(client: PrismaClient): Promise<void> {
     throw new Error("resetDatabase refused: DATABASE_URL does not point at a test database");
   }
   await client.$executeRawUnsafe(
-    'TRUNCATE TABLE "SourceLink", "OrderEvent", "OrderBatch", "Order", "ClientIdentity", "Client", "AuditEvent", "Session", "User" RESTART IDENTITY CASCADE',
+    'TRUNCATE TABLE "OutboundEmail", "Proposal", "EmailMessage", "FileArtifact", "TransferJob", "SourceLink", "OrderEvent", "OrderBatch", "Order", "ClientIdentity", "Client", "AuditEvent", "Session", "User" RESTART IDENTITY CASCADE',
   );
 }

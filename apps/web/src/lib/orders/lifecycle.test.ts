@@ -130,6 +130,30 @@ describe("order and batch lifecycle services", () => {
     await expect(prisma.auditEvent.count()).resolves.toBe(1);
   });
 
+  it("blocks manual batch transitions after transfer jobs exist", async () => {
+    const { batch } = await createOrderAndBatch();
+    await prisma.transferJob.create({
+      data: {
+        batchId: batch.id,
+        kind: "DOWNLOAD",
+        correlationId,
+      },
+    });
+
+    await expect(
+      setBatchStatus(prisma, {
+        batchId: batch.id,
+        status: "CANCELLED",
+        actor,
+        correlationId,
+      }),
+    ).rejects.toThrow(/controlled by|disabled after|transfer pipeline/iu);
+    await expect(
+      prisma.orderBatch.findUniqueOrThrow({ where: { id: batch.id } }),
+    ).resolves.toMatchObject({ status: "PENDING" });
+    await expect(prisma.orderEvent.count()).resolves.toBe(0);
+  });
+
   it("refuses an ETA earlier than now without writing events", async () => {
     const { order } = await createOrderAndBatch();
 

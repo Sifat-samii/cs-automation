@@ -30,7 +30,7 @@ jobs:
       INGEST_HMAC_SECRET: 0123456789abcdef0123456789abcdef
       BACKUP_ROOT_UNC: '\\ci-host\Production\Backup'
       PRODUCTION_ROOT_UNC: '\\ci-host\Production\Live'
-      STAGING_ROOT: /tmp/cs-staging
+      STAGING_ROOT: 'D:\cs-staging'
 
     steps:
       - uses: actions/checkout@v4

@@ -17,6 +17,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </Link>
             <nav className="flex items-center gap-1 text-sm font-medium text-slate-600">
               <Link
+                href="/inbox"
+                className="rounded-lg px-3 py-2 hover:bg-slate-100 hover:text-slate-950"
+              >
+                Inbox
+              </Link>
+              <Link
                 href="/orders"
                 className="rounded-lg px-3 py-2 hover:bg-slate-100 hover:text-slate-950"
               >

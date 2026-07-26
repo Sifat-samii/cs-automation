@@ -20,6 +20,18 @@ async function createClient(code: string = "VRLY") {
   });
 }
 
+async function createActor() {
+  return prisma.user.create({
+    data: {
+      id: actorUserId,
+      loginId: "2061",
+      displayName: "Sifat Sami",
+      passwordHash: "test-only-password-hash",
+      role: "CS_LEAD",
+    },
+  });
+}
+
 async function createOrder(clientId: string, code: string = "VRLY_260726_001") {
   return prisma.order.create({
     data: {
@@ -50,6 +62,7 @@ describe("Phase 1 domain invariants", () => {
   });
 
   it("refuses OrderEvent updates and deletes at the database level", async () => {
+    await createActor();
     const client = await createClient();
     const order = await createOrder(client.id);
     const event = await prisma.orderEvent.create({
@@ -74,6 +87,7 @@ describe("Phase 1 domain invariants", () => {
   });
 
   it("enforces unique order codes", async () => {
+    await createActor();
     const client = await createClient();
     await createOrder(client.id);
     await expect(createOrder(client.id)).rejects.toMatchObject({ code: "P2002" });
@@ -102,6 +116,7 @@ describe("Phase 1 domain invariants", () => {
   });
 
   it("refuses to delete a client that has orders", async () => {
+    await createActor();
     const client = await createClient();
     await createOrder(client.id);
 
@@ -123,5 +138,10 @@ describe("Phase 1 domain invariants", () => {
 
     await prisma.client.delete({ where: { id: client.id } });
     await expect(prisma.clientIdentity.count({ where: { clientId: client.id } })).resolves.toBe(0);
+  });
+
+  it("rejects orphan actor ids on audit-bearing order records", async () => {
+    const client = await createClient();
+    await expect(createOrder(client.id)).rejects.toMatchObject({ code: "P2003" });
   });
 });

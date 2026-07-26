@@ -1,0 +1,121 @@
+{
+  "name": "CS Automation - Gmail Poll and Ingest",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "readStatus": "unread"
+        },
+        "options": {
+          "downloadAttachments": false
+        }
+      },
+      "id": "9e821dda-64b7-4d25-8740-2be8282ece88",
+      "name": "Shared Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.3,
+      "position": [0, 0],
+      "credentials": {
+        "gmailOAuth2": {
+          "name": "SHARED_CS_GMAIL_OAUTH"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { createHmac } = require('crypto');\nconst item = $input.item.json;\nconst rawHeaders = Array.isArray(item.payload?.headers) ? item.payload.headers : Array.isArray(item.headers) ? item.headers : [];\nconst parsedHeaders = Object.fromEntries(rawHeaders.map((header) => [String(header.name).toLowerCase(), header.value]));\nconst objectHeaders = item.headers && !Array.isArray(item.headers) ? item.headers : {};\nconst headers = { ...parsedHeaders, ...objectHeaders };\nconst address = (value) => String(value ?? '').match(/<([^>]+)>/)?.[1] ?? String(value ?? '');\nconst decodeBase64Url = (value) => {\n  const normalized = String(value).replace(/-/g, '+').replace(/_/g, '/');\n  return Buffer.from(normalized, 'base64').toString('utf8');\n};\nconst textParts = [];\nconst mimeAttachments = [];\nconst visitPart = (part) => {\n  if (!part || typeof part !== 'object') return;\n  if (part.filename) {\n    mimeAttachments.push({\n      filename: String(part.filename),\n      ...(part.mimeType ? { mimeType: String(part.mimeType) } : {}),\n      ...(Number.isSafeInteger(Number(part.body?.size)) ? { sizeBytes: Number(part.body.size) } : {}),\n    });\n  }\n  if (part.mimeType === 'text/plain' && part.body?.data) textParts.push(decodeBase64Url(part.body.data));\n  for (const child of Array.isArray(part.parts) ? part.parts : []) visitPart(child);\n};\nvisitPart(item.payload);\nconst fallbackAttachments = Array.isArray(item.attachments) ? item.attachments : [];\nconst attachmentSource = mimeAttachments.length > 0 ? mimeAttachments : fallbackAttachments;\nconst payload = {\n  gmailMessageId: String(item.id ?? item.messageId),\n  gmailThreadId: String(item.threadId),\n  fromAddress: address(item.from ?? headers.from).trim().toLowerCase(),\n  toAddresses: String(item.to ?? headers.to ?? '').split(',').map(address).map((value) => value.trim().toLowerCase()).filter(Boolean),\n  subject: String(item.subject ?? headers.subject ?? ''),\n  bodyText: String(item.textPlain ?? item.text ?? (textParts.length > 0 ? textParts.join('\\n') : item.snippet) ?? ''),\n  receivedAt: new Date(Number(item.internalDate ?? Date.now())).toISOString(),\n  attachments: attachmentSource.map((attachment) => ({\n    filename: String(attachment.filename ?? attachment.name),\n    ...(attachment.mimeType ? { mimeType: String(attachment.mimeType) } : {}),\n    ...(Number.isSafeInteger(Number(attachment.sizeBytes ?? attachment.size)) ? { sizeBytes: Number(attachment.sizeBytes ?? attachment.size) } : {}),\n  })),\n};\nconst body = JSON.stringify(payload);\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = createHmac('sha256', $env.INGEST_HMAC_SECRET).update(`${timestamp}.${body}`, 'utf8').digest('hex');\nreturn [{ json: { body, timestamp, signature, gmailMessageId: payload.gmailMessageId } }];"
+      },
+      "id": "f6d63ba5-f6d9-4125-bc2f-bf256bb8c44d",
+      "name": "Normalize and Sign Ingest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:3100/api/ingest/email",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.gmailMessageId }}"
+            },
+            {
+              "name": "x-cs-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-cs-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "44d4d957-9785-4091-b442-c857296124d2",
+      "name": "POST HMAC Ingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [540, 0]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Shared Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize and Sign Ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize and Sign Ingest": {
+      "main": [
+        [
+          {
+            "node": "POST HMAC Ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "4896cfdf-90ad-4ccc-b42c-afc276e0bbcf",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

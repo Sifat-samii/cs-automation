@@ -14,4 +14,25 @@ export const prisma: PrismaClient =
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 export { Prisma, PrismaClient } from "@prisma/client";
-export type { User, Session, AuditEvent, UserRole } from "@prisma/client";
+export type {
+  User,
+  Session,
+  AuditEvent,
+  UserRole,
+  TransferErrorClass,
+  TransferJob,
+  TransferJobKind,
+  TransferJobStatus,
+  FileArtifact,
+  FileArtifactStage,
+  EmailDirection,
+  EmailMessage,
+  EmailTriageStatus,
+  OutboundEmail,
+  OutboundEmailStatus,
+  OutboundTemplate,
+  Proposal,
+  ProposalKind,
+  ProposalSource,
+  ProposalStatus,
+} from "@prisma/client";

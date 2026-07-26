@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from "@cs/db";
+import { Prisma, type DbClient, type PrismaClient } from "@cs/db";
 import { assertPathBudget, buildOrderCode, buildOrderFolderName, joinUncPath } from "@cs/shared";
 import { recordAudit } from "@/lib/audit";
 
@@ -78,7 +78,7 @@ function isOrderCodeCollision(error: unknown): boolean {
     : String(target).toLowerCase().includes("code");
 }
 
-export async function createOrder(db: PrismaClient, input: CreateOrderInput) {
+export async function createOrderInTransaction(db: DbClient, input: CreateOrderInput) {
   const title = requiredTrimmed(input.title, "Order title");
   const orderType = requiredTrimmed(input.orderType, "Order type");
   const quantity = normaliseQuantity(input.quantity);
@@ -90,92 +90,94 @@ export async function createOrder(db: PrismaClient, input: CreateOrderInput) {
     normaliseSourceLink(source, input.actor.userId),
   );
 
+  const client = await db.client.findUnique({
+    where: { id: input.clientId },
+    select: { id: true, code: true, folderName: true, isActive: true },
+  });
+  if (!client?.isActive) {
+    throw new Error("Order client does not exist or is inactive");
+  }
+
+  const firstCode = buildOrderCode(client.code, createdAt, 1);
+  const codePrefix = firstCode.slice(0, -3);
+  const latestOrder = await db.order.findFirst({
+    where: {
+      clientId: client.id,
+      code: { startsWith: codePrefix },
+    },
+    orderBy: { code: "desc" },
+    select: { code: true },
+  });
+  const sequence = latestOrder ? sequenceFromCode(latestOrder.code) + 1 : 1;
+  const code = buildOrderCode(client.code, createdAt, sequence);
+  const folderName = buildOrderFolderName(code, title);
+
+  const budgetSegments = [client.folderName, folderName, INITIAL_BATCH_SUBFOLDER] as const;
+  assertPathBudget(input.backupRoot, budgetSegments, LONGEST_EXPECTED_FILE_NAME);
+  assertPathBudget(input.productionRoot, budgetSegments, LONGEST_EXPECTED_FILE_NAME);
+
+  const backupPath = joinUncPath(input.backupRoot, client.folderName, folderName);
+  const productionPath = joinUncPath(input.productionRoot, client.folderName, folderName);
+  const order = await db.order.create({
+    data: {
+      code,
+      clientId: client.id,
+      title,
+      orderType,
+      ...(quantity !== undefined ? { quantity } : {}),
+      folderName,
+      backupPath,
+      productionPath,
+      createdById: input.actor.userId,
+      createdAt,
+    },
+  });
+
+  const batch = await db.orderBatch.create({
+    data: {
+      orderId: order.id,
+      sequence: 1,
+      kind: "INITIAL",
+      subfolder: INITIAL_BATCH_SUBFOLDER,
+      createdById: input.actor.userId,
+      ...(sourceLinks.length > 0
+        ? {
+            sourceLinks: {
+              create: sourceLinks,
+            },
+          }
+        : {}),
+    },
+  });
+
+  await db.orderEvent.create({
+    data: {
+      orderId: order.id,
+      batchId: batch.id,
+      type: "order.created",
+      payload: { code, status: "DRAFT" },
+      actorUserId: input.actor.userId,
+      actorLabel: input.actor.label,
+      correlationId: input.correlationId,
+    },
+  });
+  await recordAudit(db, {
+    correlationId: input.correlationId,
+    actorUserId: input.actor.userId,
+    actorLabel: input.actor.label,
+    action: "order.created",
+    entityType: "Order",
+    entityId: order.id,
+    metadata: { code, clientId: client.id, batchId: batch.id },
+  });
+
+  return order;
+}
+
+export async function createOrder(db: PrismaClient, input: CreateOrderInput) {
   for (let retry = 0; retry <= MAX_SEQUENCE_RETRIES; retry += 1) {
     try {
-      return await db.$transaction(async (transaction) => {
-        const client = await transaction.client.findUnique({
-          where: { id: input.clientId },
-          select: { id: true, code: true, folderName: true, isActive: true },
-        });
-        if (!client?.isActive) {
-          throw new Error("Order client does not exist or is inactive");
-        }
-
-        const firstCode = buildOrderCode(client.code, createdAt, 1);
-        const codePrefix = firstCode.slice(0, -3);
-        const latestOrder = await transaction.order.findFirst({
-          where: {
-            clientId: client.id,
-            code: { startsWith: codePrefix },
-          },
-          orderBy: { code: "desc" },
-          select: { code: true },
-        });
-        const sequence = latestOrder ? sequenceFromCode(latestOrder.code) + 1 : 1;
-        const code = buildOrderCode(client.code, createdAt, sequence);
-        const folderName = buildOrderFolderName(code, title);
-
-        const budgetSegments = [client.folderName, folderName, INITIAL_BATCH_SUBFOLDER] as const;
-        assertPathBudget(input.backupRoot, budgetSegments, LONGEST_EXPECTED_FILE_NAME);
-        assertPathBudget(input.productionRoot, budgetSegments, LONGEST_EXPECTED_FILE_NAME);
-
-        const backupPath = joinUncPath(input.backupRoot, client.folderName, folderName);
-        const productionPath = joinUncPath(input.productionRoot, client.folderName, folderName);
-        const order = await transaction.order.create({
-          data: {
-            code,
-            clientId: client.id,
-            title,
-            orderType,
-            ...(quantity !== undefined ? { quantity } : {}),
-            folderName,
-            backupPath,
-            productionPath,
-            createdById: input.actor.userId,
-            createdAt,
-          },
-        });
-
-        const batch = await transaction.orderBatch.create({
-          data: {
-            orderId: order.id,
-            sequence: 1,
-            kind: "INITIAL",
-            subfolder: INITIAL_BATCH_SUBFOLDER,
-            createdById: input.actor.userId,
-            ...(sourceLinks.length > 0
-              ? {
-                  sourceLinks: {
-                    create: sourceLinks,
-                  },
-                }
-              : {}),
-          },
-        });
-
-        await transaction.orderEvent.create({
-          data: {
-            orderId: order.id,
-            batchId: batch.id,
-            type: "order.created",
-            payload: { code, status: "DRAFT" },
-            actorUserId: input.actor.userId,
-            actorLabel: input.actor.label,
-            correlationId: input.correlationId,
-          },
-        });
-        await recordAudit(transaction, {
-          correlationId: input.correlationId,
-          actorUserId: input.actor.userId,
-          actorLabel: input.actor.label,
-          action: "order.created",
-          entityType: "Order",
-          entityId: order.id,
-          metadata: { code, clientId: client.id, batchId: batch.id },
-        });
-
-        return order;
-      });
+      return await db.$transaction((transaction) => createOrderInTransaction(transaction, input));
     } catch (error) {
       if (retry < MAX_SEQUENCE_RETRIES && isOrderCodeCollision(error)) {
         continue;

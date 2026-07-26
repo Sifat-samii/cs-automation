@@ -14,10 +14,11 @@ On-prem automation for the Client Support team: Gmail intake, human-approved ord
 
 ## Current status
 
-Phases 0 and 1 are implemented, verified, and integrated into `develop`. The current application
-includes the npm workspaces foundation, shared security and path utilities, PostgreSQL audit and
-order-domain schemas, staff-ID authentication, the protected dashboard, manual client binding,
-manual order creation, batch management, ETA handling, and lifecycle timelines.
+Phases 0 and 1 are integrated into `develop`. Phase 2 is implemented and verified on
+`feature/file-agent`. The application now includes the leased transfer queue, HMAC-only agent API,
+streaming public Dropbox and manual-drop intake, staging/archive verification, atomic backup and
+production publication, SHA-256 manifests, the Windows File Agent, and operator transfer
+monitoring.
 
 The merged application has been verified running on port 3100 under a host account that can read
 the approved backup test root. GitHub Actions and the local `npm run verify` quality gate both
@@ -33,7 +34,7 @@ See [docs/implementation-status.md](docs/implementation-status.md) for verificat
 - `apps/web` — Next.js authentication, protected dashboard, client registry, and manual order
   management.
 
-File-agent operations, Gmail integration, AI assistance, and Sheets sync are not part of Phase 1.
+Gmail integration, AI assistance, and Sheets sync remain later phases.
 
 ## First-time setup
 
