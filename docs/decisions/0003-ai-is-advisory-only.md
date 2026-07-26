@@ -6,7 +6,7 @@ Client emails are messy: additional files, samples, corrections, late instructio
 
 ## Decision
 
-Deterministic rules own client resolution, Gmail thread correlation, and Dropbox/Drive link extraction. The model only proposes intent classification and free-text fields. Model output is validated against a Zod schema and treated as untrusted. Every proposal passes through human approval before an order, filesystem write, or outbound email exists. Rule-based proposals appear in the inbox immediately; model refinements apply asynchronously.
+Deterministic rules own client resolution, Gmail thread correlation, and Dropbox/Drive link extraction. The model only proposes intent classification and free-text fields. Model output is validated against a Zod schema and treated as untrusted. Every proposal passes through human approval before an order or filesystem write exists. Outbound email is human-gated except for the two system templates documented in ADR 0007 (`RECEIPT_ACKNOWLEDGEMENT`, `FILES_VERIFIED`). Rule-based proposals appear in the inbox immediately; model refinements apply asynchronously.
 
 ## Alternatives considered
 

@@ -75,7 +75,7 @@ describe("files-verified and ETA outbound drafting", () => {
     await prisma.$disconnect();
   });
 
-  it("drafts FILES_VERIFIED with an existing ETA without changing order status", async () => {
+  it("system-approves FILES_VERIFIED with an existing ETA without changing order status", async () => {
     const eta = new Date("2026-07-28T09:00:00.000Z");
     const fixture = await createFixtures({ orderStatus: "ACKNOWLEDGED", eta });
     const result = await handleBatchVerified(prisma, {
@@ -89,13 +89,17 @@ describe("files-verified and ETA outbound drafting", () => {
       prisma.outboundEmail.findUniqueOrThrow({
         where: { idempotencyKey: `files-verified:${fixture.batchId}` },
       }),
-    ).resolves.toMatchObject({ template: "FILES_VERIFIED", status: "DRAFT" });
+    ).resolves.toMatchObject({
+      template: "FILES_VERIFIED",
+      status: "APPROVED",
+      approvedById: null,
+    });
     await expect(
       prisma.order.findUniqueOrThrow({ where: { id: fixture.orderId } }),
     ).resolves.toMatchObject({ status: "ACKNOWLEDGED", eta });
   });
 
-  it("drafts FILES_VERIFIED and moves an acknowledged order to AWAITING_ETA", async () => {
+  it("system-approves FILES_VERIFIED and moves an acknowledged order to AWAITING_ETA", async () => {
     const fixture = await createFixtures({ orderStatus: "ACKNOWLEDGED" });
     const result = await handleBatchVerified(prisma, {
       batchId: fixture.batchId,

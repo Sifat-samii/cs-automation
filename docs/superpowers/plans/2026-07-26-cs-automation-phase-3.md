@@ -60,8 +60,8 @@ isProject: false
 - No secrets in the repository. Never log passwords, tokens, session IDs, HMAC secrets, or full client file contents.
 - Conventional Commit after every task.
 - **No AI / Ollama in this phase.** `Proposal.source` may store `LLM` for Phase 4 compatibility, but Phase 3 writers must only create `RULE` proposals.
-- **Do not invent client email subject/body copy.** Templates use merge fields and `GATE_BLOCKED_PLACEHOLDER` until copy is approved and pasted into this plan under [Approved email copy](#approved-email-copy-gate-item-3).
-- Live Gmail **send** must remain disabled (or fail closed) while placeholders remain.
+- **Do not invent client email subject/body copy.** Pilot-approved local dry-run copy is recorded under [Approved email copy](#approved-email-copy-gate-item-3) and in `apps/web/src/lib/outbound/templates.ts`. Final brand/legal wording may replace it later. Approval remains fail-closed if rendered fields still contain `GATE_BLOCKED_PLACEHOLDER`.
+- Live Gmail **send** must remain inactive until n8n service, OAuth, and dry-run verification complete.
 - Phase 3 adds only Prisma models `EmailMessage`, `Proposal`, `OutboundEmail` (plus enums/relations). Do not add Phase 4/5 models.
 - Reuse Phase 0 HMAC (`signRequest` / `verifyRequest`), Phase 1 `resolveClientByEmail` / order+batch services, Phase 2 `queueBatchTransfer`.
 
@@ -69,12 +69,12 @@ isProject: false
 
 Before creating `feature/gmail-integration` implementation commits:
 
-| #   | Requirement                                                                      | Status                               |
-| --- | -------------------------------------------------------------------------------- | ------------------------------------ |
-| 0   | Phase 2 review-hardened branch merged into `develop`                             | Must verify                          |
-| 1   | n8n installed and running as a Windows service                                   | Must verify                          |
-| 2   | Gmail OAuth completed for the shared CS mailbox                                  | Must verify                          |
-| 3   | Exact wording approved for `ACKNOWLEDGEMENT`, `FILES_VERIFIED`, and `ETA_NOTICE` | Must verify — see placeholders below |
+| #   | Requirement                                                                      | Status                                   |
+| --- | -------------------------------------------------------------------------------- | ---------------------------------------- |
+| 0   | Phase 2 review-hardened branch merged into `develop`                             | Must verify                              |
+| 1   | n8n installed and running as a Windows service                                   | Must verify                              |
+| 2   | Gmail OAuth completed for the shared CS mailbox                                  | Must verify                              |
+| 3   | Exact wording approved for `ACKNOWLEDGEMENT`, `FILES_VERIFIED`, and `ETA_NOTICE` | Pilot-approved local copy recorded below |
 
 If any item fails: report the unmet gate, update `docs/unresolved-questions.md`, and **stop**. Do not invent email copy. Do not implement Tasks 3.1–3.10.
 
@@ -82,13 +82,64 @@ If any item fails: report the unmet gate, update `docs/unresolved-questions.md`,
 
 ## Approved email copy (gate item 3)
 
-Until owners paste approved text here, renderers must emit placeholders and outbound send must refuse production send.
+Pilot-approved local dry-run copy (2026-07-26). Not final brand/legal wording. Implemented in
+`apps/web/src/lib/outbound/templates.ts`. Approval still refuses any draft whose rendered
+subject/body contains `GATE_BLOCKED_PLACEHOLDER`.
 
-| Template          | Subject                    | Body                       |
-| ----------------- | -------------------------- | -------------------------- |
-| `ACKNOWLEDGEMENT` | `GATE_BLOCKED_PLACEHOLDER` | `GATE_BLOCKED_PLACEHOLDER` |
-| `FILES_VERIFIED`  | `GATE_BLOCKED_PLACEHOLDER` | `GATE_BLOCKED_PLACEHOLDER` |
-| `ETA_NOTICE`      | `GATE_BLOCKED_PLACEHOLDER` | `GATE_BLOCKED_PLACEHOLDER` |
+### `ACKNOWLEDGEMENT`
+
+**Subject:** `Re: {{title}} — order received ({{orderCode}})`
+
+**Body:**
+
+```text
+Hi {{clientDisplayName}},
+
+Thank you for your email. We have received your request for "{{title}}" and created order {{orderCode}}.
+
+Our team will review the files and confirm once they are verified. If anything is missing or unclear, we will follow up in this thread.
+
+Best regards,
+Client Support
+```
+
+### `FILES_VERIFIED`
+
+**Subject:** `Re: {{title}} — files verified ({{orderCode}})`
+
+**Body:**
+
+```text
+Hi {{clientDisplayName}},
+
+The files for order {{orderCode}} ("{{title}}") have been verified and are ready for production.
+
+{{etaNote}}
+
+We will keep you updated in this thread if anything changes.
+
+Best regards,
+Client Support
+```
+
+### `ETA_NOTICE`
+
+**Subject:** `Re: {{title}} — delivery ETA ({{orderCode}})`
+
+**Body:**
+
+```text
+Hi {{clientDisplayName}},
+
+For order {{orderCode}} ("{{title}}"), our current estimated delivery date is {{eta}}.
+
+{{etaNote}}
+
+Please reply in this thread if you need any adjustment.
+
+Best regards,
+Client Support
+```
 
 ### Merge fields (allowed substitutions once copy exists)
 
@@ -494,7 +545,8 @@ it("never creates a second order when the same proposal is approved twice", asyn
 - Every sent message carries the correct `gmailThreadId`.
 - An email resolving to no client reaches the inbox as `NEEDS_HUMAN` rather than being dropped.
 - Ingest rejects bad HMAC and applies rate limiting.
-- Client-facing subject/body are either approved copy or remain gated by `GATE_BLOCKED_PLACEHOLDER` with send blocked.
+- Client-facing subject/body use pilot-approved copy; any remaining `GATE_BLOCKED_PLACEHOLDER`
+  content still blocks approval/send.
 
 ## Out of scope (do not implement)
 

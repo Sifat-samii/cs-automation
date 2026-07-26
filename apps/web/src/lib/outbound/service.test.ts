@@ -7,7 +7,6 @@ import {
   draftOutboundEmail,
   claimPendingOutbound,
   markOutboundSent,
-  OutboundCopyGateError,
   OutboundStateError,
 } from "@/lib/outbound/service";
 import { GATE_BLOCKED_PLACEHOLDER } from "@/lib/outbound/templates";
@@ -64,7 +63,46 @@ describe("outbound email service", () => {
     await prisma.$disconnect();
   });
 
-  it("renders placeholder drafts idempotently and refuses human approval", async () => {
+  it("claims system-approved receipt rows without an order or human approver", async () => {
+    await createFixtures();
+    await prisma.emailMessage.create({
+      data: {
+        gmailMessageId: "gmail-message-receipt",
+        gmailThreadId: "gmail-thread-receipt",
+        direction: "INBOUND",
+        fromAddress: "buyer@example.com",
+        toAddresses: ["cs@example.test"],
+        subject: "Hello",
+        bodyText: "Body",
+        receivedAt: new Date("2026-07-26T12:00:00.000Z"),
+      },
+    });
+    const message = await prisma.emailMessage.findUniqueOrThrow({
+      where: { gmailMessageId: "gmail-message-receipt" },
+    });
+    await prisma.outboundEmail.create({
+      data: {
+        emailMessageId: message.id,
+        template: "RECEIPT_ACKNOWLEDGEMENT",
+        renderedSubject: "Re: Hello — we received your email",
+        renderedBody: "Working on it",
+        status: "APPROVED",
+        approvedAt: new Date("2026-07-26T13:00:00.000Z"),
+        idempotencyKey: "receipt-ack:gmail-message-receipt",
+        gmailThreadId: "gmail-thread-receipt",
+      },
+    });
+
+    await expect(claimPendingOutbound(prisma)).resolves.toEqual([
+      expect.objectContaining({
+        idempotencyKey: "receipt-ack:gmail-message-receipt",
+        toAddress: "buyer@example.com",
+        status: "SENDING",
+      }),
+    ]);
+  });
+
+  it("renders pilot template drafts idempotently and allows human approval", async () => {
     const { orderId } = await createFixtures();
     const first = await draftOutboundEmail(prisma, {
       orderId,
@@ -77,16 +115,42 @@ describe("outbound email service", () => {
       idempotencyKey: "ack:test",
     });
     expect(second.id).toBe(first.id);
-    expect(first.renderedSubject).toBe(GATE_BLOCKED_PLACEHOLDER);
+    expect(first.renderedSubject).toBe("Re: Spring Drop — order received (VRLY_260726_001)");
+    expect(first.renderedBody).toContain("Hi Verily,");
+    expect(first.renderedBody).toContain('request for "Spring Drop"');
+    expect(first.renderedBody).toContain("order VRLY_260726_001");
+    expect(first.renderedBody).toContain("<br><br>");
+    expect(first.renderedBody).toContain("Best regards,<br>Client Support");
     await expect(
       approveOutboundEmail(prisma, {
         outboundEmailId: first.id,
         approvedById: actorUserId,
       }),
-    ).rejects.toBeInstanceOf(OutboundCopyGateError);
+    ).resolves.toMatchObject({ status: "APPROVED", approvedById: actorUserId });
+  });
+
+  it("quarantines approved rows whose stored copy still contains the gate placeholder", async () => {
+    const { orderId } = await createFixtures();
+    await prisma.outboundEmail.create({
+      data: {
+        orderId,
+        template: "ACKNOWLEDGEMENT",
+        renderedSubject: GATE_BLOCKED_PLACEHOLDER,
+        renderedBody: GATE_BLOCKED_PLACEHOLDER,
+        status: "APPROVED",
+        approvedById: actorUserId,
+        approvedAt: new Date("2026-07-26T13:00:00.000Z"),
+        idempotencyKey: "ack:blocked",
+        gmailThreadId: "gmail-thread-1",
+      },
+    });
+    await expect(claimPendingOutbound(prisma)).resolves.toEqual([]);
     await expect(
-      prisma.outboundEmail.findUniqueOrThrow({ where: { id: first.id } }),
-    ).resolves.toMatchObject({ status: "DRAFT", approvedById: null });
+      prisma.outboundEmail.findUniqueOrThrow({ where: { idempotencyKey: "ack:blocked" } }),
+    ).resolves.toMatchObject({
+      status: "FAILED",
+      lastError: "Gate-blocked placeholder reached the outbound queue",
+    });
   });
 
   it("pending atomically claims only human-approved rows with the original thread recipient", async () => {

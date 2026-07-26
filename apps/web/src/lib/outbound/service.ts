@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { Prisma, type DbClient, type OutboundTemplate, type PrismaClient } from "@cs/db";
 import { assertOrderTransition, type OrderStatus } from "@cs/shared";
 import { recordAudit } from "@/lib/audit";
-import { containsGateBlockedPlaceholder, renderOutboundTemplate } from "@/lib/outbound/templates";
+import {
+  containsGateBlockedPlaceholder,
+  renderOutboundTemplate,
+  type TemplateContext,
+} from "@/lib/outbound/templates";
+
+export const SYSTEM_AUTO_OUTBOUND_ACTOR = "system:auto-outbound";
 
 export class OutboundStateError extends Error {
   constructor(message: string) {
@@ -23,6 +29,16 @@ export type DraftOutboundInput = {
   template: OutboundTemplate;
   idempotencyKey: string;
   gmailThreadId?: string;
+};
+
+export type DraftSystemOutboundInput = {
+  template: OutboundTemplate;
+  idempotencyKey: string;
+  gmailThreadId: string;
+  orderId?: string;
+  emailMessageId?: string;
+  context: TemplateContext;
+  now?: Date;
 };
 
 export async function draftOutboundEmail(db: DbClient, input: DraftOutboundInput) {
@@ -58,6 +74,68 @@ export async function draftOutboundEmail(db: DbClient, input: DraftOutboundInput
   });
 }
 
+export async function draftAndSystemApproveOutbound(db: DbClient, input: DraftSystemOutboundInput) {
+  const now = input.now ?? new Date();
+  const existing = await db.outboundEmail.findUnique({
+    where: { idempotencyKey: input.idempotencyKey },
+  });
+  if (existing) {
+    if (
+      existing.status === "APPROVED" ||
+      existing.status === "SENDING" ||
+      existing.status === "SENT"
+    ) {
+      return existing;
+    }
+    if (containsGateBlockedPlaceholder(existing.renderedSubject, existing.renderedBody)) {
+      throw new OutboundCopyGateError();
+    }
+    return db.outboundEmail.update({
+      where: { id: existing.id },
+      data: {
+        status: "APPROVED",
+        approvedById: null,
+        approvedAt: existing.approvedAt ?? now,
+        lastError: null,
+      },
+    });
+  }
+
+  const rendered = renderOutboundTemplate(input.template, input.context);
+  if (containsGateBlockedPlaceholder(rendered.subject, rendered.body)) {
+    throw new OutboundCopyGateError();
+  }
+
+  const created = await db.outboundEmail.create({
+    data: {
+      ...(input.orderId ? { orderId: input.orderId } : {}),
+      ...(input.emailMessageId ? { emailMessageId: input.emailMessageId } : {}),
+      template: input.template,
+      renderedSubject: rendered.subject,
+      renderedBody: rendered.body,
+      status: "APPROVED",
+      approvedById: null,
+      approvedAt: now,
+      idempotencyKey: input.idempotencyKey,
+      gmailThreadId: input.gmailThreadId,
+    },
+  });
+  await recordAudit(db, {
+    correlationId: randomUUID(),
+    actorUserId: null,
+    actorLabel: SYSTEM_AUTO_OUTBOUND_ACTOR,
+    action: "outbound.system_approved",
+    entityType: "OutboundEmail",
+    entityId: created.id,
+    metadata: {
+      template: input.template,
+      orderId: input.orderId ?? null,
+      emailMessageId: input.emailMessageId ?? null,
+    },
+  });
+  return created;
+}
+
 export async function approveOutboundEmail(
   db: PrismaClient,
   input: { outboundEmailId: string; approvedById: string; now?: Date },
@@ -78,6 +156,9 @@ export async function approveOutboundEmail(
     if (outbound.status === "APPROVED") return outbound;
     if (outbound.status !== "DRAFT") {
       throw new OutboundStateError(`Cannot approve outbound email from ${outbound.status}`);
+    }
+    if (!outbound.order) {
+      throw new OutboundStateError("Human approval requires an order-linked outbound email");
     }
     const rendered = renderOutboundTemplate(outbound.template, {
       orderCode: outbound.order.code,
@@ -117,7 +198,6 @@ export async function claimPendingOutbound(db: PrismaClient, limit: number = 50)
       SELECT "id"
       FROM "OutboundEmail"
       WHERE "status" = 'APPROVED'
-        AND "approvedById" IS NOT NULL
         AND "approvedAt" IS NOT NULL
       ORDER BY "createdAt" ASC
       LIMIT ${limit}
@@ -128,6 +208,9 @@ export async function claimPendingOutbound(db: PrismaClient, limit: number = 50)
     const rows = await transaction.outboundEmail.findMany({
       where: { id: { in: claimedIds.map(({ id }) => id) } },
       include: {
+        emailMessage: {
+          select: { fromAddress: true, gmailThreadId: true },
+        },
         order: {
           include: {
             emailMessages: {
@@ -155,10 +238,18 @@ export async function claimPendingOutbound(db: PrismaClient, limit: number = 50)
     for (const { id } of claimedIds) {
       const row = rowsById.get(id);
       if (!row) continue;
-      const threadMessage = row.order.emailMessages.find(
-        (message) => message.gmailThreadId === row.gmailThreadId,
-      );
-      if (!threadMessage) {
+
+      let toAddress: string | null = null;
+      if (row.emailMessage && row.emailMessage.gmailThreadId === row.gmailThreadId) {
+        toAddress = row.emailMessage.fromAddress;
+      } else if (row.order) {
+        const threadMessage = row.order.emailMessages.find(
+          (message) => message.gmailThreadId === row.gmailThreadId,
+        );
+        toAddress = threadMessage?.fromAddress ?? null;
+      }
+
+      if (!toAddress) {
         await transaction.outboundEmail.update({
           where: { id: row.id },
           data: {
@@ -186,7 +277,7 @@ export async function claimPendingOutbound(db: PrismaClient, limit: number = 50)
       ready.push({
         id: row.id,
         template: row.template,
-        toAddress: threadMessage.fromAddress,
+        toAddress,
         renderedSubject: row.renderedSubject,
         renderedBody: row.renderedBody,
         gmailThreadId: row.gmailThreadId,
@@ -245,9 +336,9 @@ async function recordTransportOrderTransition(
   });
 }
 
-async function advanceOrderAfterAcknowledgement(
+async function advanceOrderAfterClientConfirmation(
   db: DbClient,
-  input: { orderId: string; correlationId: string },
+  input: { orderId: string; correlationId: string; reason: string },
 ): Promise<void> {
   await db.$queryRaw`
     SELECT "id"
@@ -265,7 +356,7 @@ async function advanceOrderAfterAcknowledgement(
       orderId: input.orderId,
       from: "DRAFT",
       to: "ACKNOWLEDGED",
-      reason: "acknowledgement_sent",
+      reason: input.reason,
       correlationId: input.correlationId,
     });
     status = "ACKNOWLEDGED";
@@ -281,7 +372,7 @@ async function advanceOrderAfterAcknowledgement(
       orderId: input.orderId,
       from: "ACKNOWLEDGED",
       to: "AWAITING_ETA",
-      reason: "acknowledgement_sent_after_files_verified",
+      reason: `${input.reason}_after_files_verified`,
       correlationId: input.correlationId,
     });
   }
@@ -314,8 +405,8 @@ export async function markOutboundSent(
     if (outbound.status !== "SENDING") {
       throw new OutboundStateError(`Cannot mark outbound email sent from ${outbound.status}`);
     }
-    if (!outbound.approvedById || !outbound.approvedAt) {
-      throw new OutboundStateError("Outbound email has no recorded human approval");
+    if (!outbound.approvedAt) {
+      throw new OutboundStateError("Outbound email has no recorded approval");
     }
 
     const sent = await transaction.outboundEmail.update({
@@ -326,10 +417,18 @@ export async function markOutboundSent(
         lastError: null,
       },
     });
-    if (outbound.template === "ACKNOWLEDGEMENT") {
-      await advanceOrderAfterAcknowledgement(transaction, {
+    if (outbound.orderId && outbound.template === "ACKNOWLEDGEMENT") {
+      await advanceOrderAfterClientConfirmation(transaction, {
         orderId: outbound.orderId,
         correlationId: randomUUID(),
+        reason: "acknowledgement_sent",
+      });
+    }
+    if (outbound.orderId && outbound.template === "FILES_VERIFIED") {
+      await advanceOrderAfterClientConfirmation(transaction, {
+        orderId: outbound.orderId,
+        correlationId: randomUUID(),
+        reason: "files_verified_sent",
       });
     }
     return sent;

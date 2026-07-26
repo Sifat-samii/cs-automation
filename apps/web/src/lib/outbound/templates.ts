@@ -2,8 +2,8 @@ import type { OutboundTemplate } from "@cs/db";
 
 export const GATE_BLOCKED_PLACEHOLDER = "GATE_BLOCKED_PLACEHOLDER";
 
-type TemplateContext = {
-  orderCode: string;
+export type TemplateContext = {
+  orderCode?: string;
   clientDisplayName: string;
   title: string;
   eta?: string;
@@ -15,26 +15,75 @@ type TemplateCopy = {
   body: string;
 };
 
-// Owners must replace these exact values with approved wording. Approval remains
-// fail-closed while either rendered field contains the placeholder.
+// Pilot-approved local dry-run copy (2026-07-26). Not final brand/legal wording.
+// Bodies are authored as plain text, then rendered to HTML for Gmail (emailType: html).
+// Approval remains fail-closed while either rendered field contains GATE_BLOCKED_PLACEHOLDER.
 const TEMPLATE_COPY: Record<OutboundTemplate, TemplateCopy> = {
   ACKNOWLEDGEMENT: {
-    subject: GATE_BLOCKED_PLACEHOLDER,
-    body: GATE_BLOCKED_PLACEHOLDER,
+    subject: "Re: {{title}} — order received ({{orderCode}})",
+    body: `Hi {{clientDisplayName}},
+
+Thank you for your email. We have received your request for "{{title}}" and created order {{orderCode}}.
+
+Our team will review the files and confirm once they are verified. If anything is missing or unclear, we will follow up in this thread.
+
+Best regards,
+Client Support`,
+  },
+  RECEIPT_ACKNOWLEDGEMENT: {
+    subject: "Re: {{title}} — we received your email",
+    body: `Hi {{clientDisplayName}},
+
+Thank you for contacting Client Support. We have received your email regarding "{{title}}".
+
+Our team is reviewing your request and will follow up in this thread shortly.
+
+Best regards,
+Client Support`,
   },
   FILES_VERIFIED: {
-    subject: GATE_BLOCKED_PLACEHOLDER,
-    body: GATE_BLOCKED_PLACEHOLDER,
+    subject: "Re: {{title}} — files verified ({{orderCode}})",
+    body: `Hi {{clientDisplayName}},
+
+The files for order {{orderCode}} ("{{title}}") have been verified and are ready for production.
+
+{{etaNote}}
+
+We will keep you updated in this thread if anything changes.
+
+Best regards,
+Client Support`,
   },
   ETA_NOTICE: {
-    subject: GATE_BLOCKED_PLACEHOLDER,
-    body: GATE_BLOCKED_PLACEHOLDER,
+    subject: "Re: {{title}} — delivery ETA ({{orderCode}})",
+    body: `Hi {{clientDisplayName}},
+
+For order {{orderCode}} ("{{title}}"), our current estimated delivery date is {{eta}}.
+
+{{etaNote}}
+
+Please reply in this thread if you need any adjustment.
+
+Best regards,
+Client Support`,
   },
 };
 
-function substituteMergeFields(value: string, context: TemplateContext): string {
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function substituteMergeFields(
+  value: string,
+  context: TemplateContext,
+  options: { htmlEscape: boolean },
+): string {
   const replacements: Record<string, string> = {
-    orderCode: context.orderCode,
+    orderCode: context.orderCode ?? "",
     clientDisplayName: context.clientDisplayName,
     title: context.title,
     eta: context.eta ?? "",
@@ -42,8 +91,22 @@ function substituteMergeFields(value: string, context: TemplateContext): string 
   };
   return value.replace(
     /\{\{(orderCode|clientDisplayName|title|eta|etaNote)\}\}/gu,
-    (_, key: string) => (key in replacements ? (replacements[key] ?? "") : ""),
+    (_, key: string) => {
+      const raw = key in replacements ? (replacements[key] ?? "") : "";
+      return options.htmlEscape ? escapeHtml(raw) : raw;
+    },
   );
+}
+
+/** Convert plain-text paragraphs into HTML suitable for Gmail emailType=html. */
+export function plainTextToEmailHtml(body: string): string {
+  return body
+    .replaceAll("\r\n", "\n")
+    .trim()
+    .split(/\n{2,}/u)
+    .map((block) => block.trim().replaceAll("\n", "<br>"))
+    .filter((block) => block.length > 0)
+    .join("<br><br>");
 }
 
 export function renderOutboundTemplate(
@@ -52,8 +115,8 @@ export function renderOutboundTemplate(
 ): TemplateCopy {
   const copy = TEMPLATE_COPY[template];
   return {
-    subject: substituteMergeFields(copy.subject, context),
-    body: substituteMergeFields(copy.body, context),
+    subject: substituteMergeFields(copy.subject, context, { htmlEscape: false }),
+    body: plainTextToEmailHtml(substituteMergeFields(copy.body, context, { htmlEscape: true })),
   };
 }
 
