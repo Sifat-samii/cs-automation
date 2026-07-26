@@ -14,3 +14,13 @@ export {
   sanitisePathSegment,
   toExtendedLengthPath,
 } from "./paths.js";
+export {
+  BATCH_STATUSES,
+  ORDER_STATUSES,
+  IllegalTransitionError,
+  assertBatchTransition,
+  assertOrderTransition,
+  batchTransition,
+  orderTransition,
+} from "./lifecycle.js";
+export type { BatchStatus, OrderStatus } from "./lifecycle.js";
