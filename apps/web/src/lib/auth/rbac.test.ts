@@ -14,7 +14,9 @@ describe("role permissions", () => {
 
   it("grants client management to CS_LEAD only", () => {
     expect(can("CS_LEAD", "client:manage")).toBe(true);
+    expect(can("CS_LEAD", "client:read")).toBe(true);
     expect(can("CS_EXECUTIVE", "client:manage")).toBe(false);
+    expect(can("CS_EXECUTIVE", "client:read")).toBe(true);
   });
 
   it("grants order writing to both CS roles", () => {
