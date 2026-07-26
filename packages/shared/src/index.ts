@@ -24,3 +24,4 @@ export {
   orderTransition,
 } from "./lifecycle.js";
 export type { BatchStatus, OrderStatus } from "./lifecycle.js";
+export { allocateUniqueClientCode, deriveClientCode } from "./client-code.js";
