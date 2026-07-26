@@ -28,7 +28,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               >
                 Orders
               </Link>
-              {can(user.role, "client:manage") && (
+              {can(user.role, "client:read") && (
                 <Link
                   href="/clients"
                   className="rounded-lg px-3 py-2 hover:bg-slate-100 hover:text-slate-950"
