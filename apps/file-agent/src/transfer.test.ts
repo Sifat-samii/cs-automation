@@ -135,7 +135,7 @@ describe("backup and production publication", () => {
       async copy(source: string, destination: string): Promise<void> {
         await fileSystem.copyTree(source, destination);
         await fileSystem.writeStream(
-          `${destination}\\nested\\image.tif`,
+          fileSystem.resolve(destination, "nested", "image.tif"),
           Readable.from("corrupted"),
           { overwrite: true },
         );
