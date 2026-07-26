@@ -75,9 +75,9 @@ export function ClientsTable({ clients }: { clients: readonly ClientTableRow[] }
               <th className="px-4 py-3 font-semibold">Code</th>
               <th className="px-4 py-3 font-semibold">Name</th>
               <th className="px-4 py-3 font-semibold">Folder path</th>
-              <th className="px-4 py-3 font-semibold">Unassigned</th>
-              <th className="px-4 py-3 font-semibold">In production</th>
-              <th className="px-4 py-3 font-semibold">Past</th>
+              <th className="px-4 py-3 text-center font-semibold">Unassigned</th>
+              <th className="px-4 py-3 text-center font-semibold">In production</th>
+              <th className="px-4 py-3 text-center font-semibold">Past</th>
             </tr>
           </thead>
           <tbody>
@@ -105,9 +105,9 @@ export function ClientsTable({ clients }: { clients: readonly ClientTableRow[] }
                     <CopyPathButton path={client.folderPath} label="client folder path" />
                   </div>
                 </td>
-                <td className="px-4 py-3 text-slate-800">{client.unassigned}</td>
-                <td className="px-4 py-3 text-slate-800">{client.inProduction}</td>
-                <td className="px-4 py-3 text-slate-800">{client.past}</td>
+                <td className="px-4 py-3 text-center text-slate-800">{client.unassigned}</td>
+                <td className="px-4 py-3 text-center text-slate-800">{client.inProduction}</td>
+                <td className="px-4 py-3 text-center text-slate-800">{client.past}</td>
               </tr>
             ))}
           </tbody>
