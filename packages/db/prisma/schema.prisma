@@ -225,6 +225,7 @@ model Order {
   events  OrderEvent[]
   emailMessages EmailMessage[]
   outboundEmails OutboundEmail[]
+  sheetMirrorOutbox SheetMirrorOutbox[]
 
   @@index([status])
   @@index([clientId, createdAt])
@@ -395,4 +396,33 @@ model OutboundEmail {
   @@index([status, createdAt])
   @@index([orderId, template])
   @@index([approvedById])
+}
+
+enum SheetMirrorOperation {
+  UPSERT
+}
+
+enum SheetMirrorStatus {
+  PENDING
+  CLAIMED
+  DONE
+  FAILED
+}
+
+model SheetMirrorOutbox {
+  id             String               @id @default(uuid()) @db.Uuid
+  orderId        String               @db.Uuid
+  order          Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  operation      SheetMirrorOperation @default(UPSERT)
+  payload        Json
+  status         SheetMirrorStatus    @default(PENDING)
+  attempts       Int                  @default(0)
+  lastError      String?
+  providerRowKey String?
+  dispatchedAt   DateTime?            @db.Timestamptz(6)
+  createdAt      DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime             @updatedAt @db.Timestamptz(6)
+
+  @@index([status, createdAt])
+  @@index([orderId])
 }
