@@ -19,3 +19,9 @@ export {
   asTransferFailure,
 } from "./transfer-errors.js";
 export type { TransferErrorClass } from "./transfer-errors.js";
+export { StagingVerifier } from "./staging.js";
+export type {
+  ManifestArtifact,
+  StagingVerificationInput,
+  StagingVerificationResult,
+} from "./staging.js";
