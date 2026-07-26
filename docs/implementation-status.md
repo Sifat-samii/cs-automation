@@ -66,12 +66,15 @@ Phase 0 is integrated into `develop`.
   development schema, then the bootstrap account was reseeded.
 - Scope: Phase 1 stores computed paths but performs no filesystem writes.
 
-## Phase 1 runtime limitation
+## Phase 1 running-state verification
 
-The Codex-sandboxed dev-server process received `EPERM` while enumerating the approved backup
-test root, so the new-client page's live existing-folder selection could not be completed in that
-browser process. A read-only host-context check enumerated `DPBP`, `FN`, and `Vrly` under the
-approved `_Software Test` root, and automated service tests cover existing-folder filtering and
-binding. The deployed web process must run under an account that can read the backup root.
+- The merged `develop` application starts successfully on port 3100 under the host account.
+- `GET /login` returns 200, while an unauthenticated dashboard request redirects to `/login`.
+- A short-lived authenticated `CS_LEAD` session loads `/dashboard` and `/clients/new` with 200
+  responses.
+- The live new-client page enumerates `DPBP`, `FN`, and `Vrly` from the approved backup test root.
+- The diagnostic session token was stored only as a SHA-256 hash and revoked immediately after
+  the check.
+- Runtime logs contain no application error for these requests.
 
 Last updated: 2026-07-26
