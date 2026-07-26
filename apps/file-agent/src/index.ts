@@ -33,3 +33,11 @@ export type {
   TransferLocation,
   TreeCopyStrategy,
 } from "./transfer.js";
+export { AgentApiClient, AgentApiError } from "./api-client.js";
+export type { AgentArtifact, AgentJob } from "./api-client.js";
+export { FileAgent, JsonLineAgentLogger } from "./agent.js";
+export type { AgentApiPort, AgentLogger, JobExecutorPort } from "./agent.js";
+export { TransferJobExecutor } from "./executor.js";
+export type { ExecutionResult } from "./executor.js";
+export { fileAgentEnvSchema, parseFileAgentEnv } from "./config.js";
+export type { FileAgentEnv } from "./config.js";

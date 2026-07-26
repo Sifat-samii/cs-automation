@@ -68,6 +68,7 @@ export async function serializeAgentJob(db: PrismaClient, jobId: string) {
       batch: {
         include: {
           sourceLinks: { orderBy: { createdAt: "asc" } },
+          fileArtifacts: { orderBy: [{ stage: "asc" }, { relativePath: "asc" }] },
           order: { include: { client: true } },
         },
       },
@@ -96,6 +97,12 @@ export async function serializeAgentJob(db: PrismaClient, jobId: string) {
         kind: source.kind,
         url: source.url,
         localHint: source.localHint,
+      })),
+      artifacts: job.batch.fileArtifacts.map((artifact) => ({
+        relativePath: artifact.relativePath,
+        sizeBytes: Number(artifact.sizeBytes),
+        sha256: artifact.sha256,
+        stage: artifact.stage,
       })),
       order: {
         id: job.batch.order.id,

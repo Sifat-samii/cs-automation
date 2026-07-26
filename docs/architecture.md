@@ -20,6 +20,11 @@ No Docker in Phase 0 (Docker is not installed on the box).
 - **n8n** is transport only; HMAC-signed requests to the app over localhost.
 - **Ollama** is advisory; output never reaches disk or email without CS approval.
 - **File Agent** is the only process that writes to backup/production shares; it only runs jobs the app authorised.
+- **File Agent service identity** is `.\CS_FileAgent` (or an approved dedicated domain
+  equivalent). It must have R/W on both pilot UNC roots and `D:\cs-staging`, plus `Log on as a
+service`. It must never run as LocalSystem because LocalSystem does not carry the intended SMB
+  share identity. `TUDB01\Designer-TUUO` is permitted only as the explicitly approved interim
+  identity until IT provisions the dedicated account.
 
 ## Package layout
 
@@ -35,3 +40,8 @@ docs/             Specs, ADRs, risks, status
 ## Path policy
 
 UNC only. Never `X:` or `Z:` in config or code. Staging on `D:\cs-staging`.
+
+The Phase 2 copy strategy is robocopy followed by full manifest verification. Public Dropbox and
+operator-confirmed manual-drop sources are enabled. Authenticated Google Drive sources are a
+permanent failure directing the operator to manual drop until credentials are deliberately
+provisioned.

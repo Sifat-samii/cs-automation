@@ -1,7 +1,8 @@
 import { prisma } from "@cs/db";
 import { z } from "zod";
 import { authenticateAgentRequest, parseAgentJson } from "@/lib/agent/http";
-import { failJob, JobLeaseError } from "@/lib/agent/jobs";
+import { JobLeaseError } from "@/lib/agent/jobs";
+import { failPipelineJob } from "@/lib/agent/pipeline";
 
 const requestSchema = z.object({
   leaseOwner: z.string().trim().min(1).max(200),
@@ -20,7 +21,7 @@ export async function POST(
   const { id } = await context.params;
 
   try {
-    const job = await failJob(prisma, { jobId: id, ...parsed.data });
+    const job = await failPipelineJob(prisma, { jobId: id, ...parsed.data });
     return Response.json({
       job: {
         id: job.id,

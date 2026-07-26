@@ -30,6 +30,15 @@ describe("parseServerEnv", () => {
     );
   });
 
+  it("rejects a relative or non-D staging root", () => {
+    expect(() => parseServerEnv({ ...valid, STAGING_ROOT: "cs-staging" })).toThrow(
+      EnvValidationError,
+    );
+    expect(() => parseServerEnv({ ...valid, STAGING_ROOT: "C:\\cs-staging" })).toThrow(
+      EnvValidationError,
+    );
+  });
+
   it("rejects an HMAC secret shorter than 32 characters", () => {
     expect(() => parseServerEnv({ ...valid, INGEST_HMAC_SECRET: "tooshort" })).toThrow(
       EnvValidationError,

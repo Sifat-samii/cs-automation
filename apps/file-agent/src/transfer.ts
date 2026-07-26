@@ -360,4 +360,17 @@ export class TransferPublisher {
       throw asTransferFailure(error, "Production copy failed");
     }
   }
+
+  async verifyProduction(
+    input: TransferLocation,
+    manifest: readonly ManifestArtifact[],
+  ): Promise<PublishedTransfer> {
+    const destination = join(
+      input.productionRoot,
+      input.clientFolder,
+      input.orderFolder,
+      input.batchSubfolder,
+    );
+    return verifyManifest(this.fileSystem, destination, manifest, "PRODUCTION");
+  }
 }

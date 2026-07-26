@@ -9,6 +9,12 @@ const uncPath = z
     message: "must be a UNC path such as \\\\host\\share\\folder, not a mapped drive letter",
   });
 
+const stagingPath = z
+  .string()
+  .refine((value) => /^D:\\/iu.test(value) && !value.startsWith("\\\\"), {
+    message: "must be an absolute path on D: such as D:\\cs-staging",
+  });
+
 export const serverEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   DATABASE_URL: z
@@ -26,7 +32,7 @@ export const serverEnvSchema = z.object({
   INGEST_HMAC_SECRET: z.string().min(32, "must be at least 32 characters"),
   BACKUP_ROOT_UNC: uncPath,
   PRODUCTION_ROOT_UNC: uncPath,
-  STAGING_ROOT: z.string().min(3),
+  STAGING_ROOT: stagingPath,
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
