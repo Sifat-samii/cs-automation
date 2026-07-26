@@ -1,6 +1,7 @@
 import { Prisma, type DbClient, type PrismaClient } from "@cs/db";
 import { assertPathBudget, buildOrderCode, buildOrderFolderName, joinUncPath } from "@cs/shared";
 import { recordAudit } from "@/lib/audit";
+import { enqueueSheetMirror } from "@/lib/sheets/outbox";
 
 const MAX_SEQUENCE_RETRIES = 3;
 const LONGEST_EXPECTED_FILE_NAME = `${"f".repeat(60)}.tif`;
@@ -169,6 +170,10 @@ export async function createOrderInTransaction(db: DbClient, input: CreateOrderI
     entityType: "Order",
     entityId: order.id,
     metadata: { code, clientId: client.id, batchId: batch.id },
+  });
+  await enqueueSheetMirror(db, {
+    orderId: order.id,
+    correlationId: input.correlationId,
   });
 
   return order;

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ProposalReviewActions, type InboxReviewOptions } from "@/app/(app)/inbox/review-actions";
 import { requireUser } from "@/lib/auth/current-user";
-import { assertCan } from "@/lib/auth/rbac";
+import { assertCan, can } from "@/lib/auth/rbac";
 
 function jsonObject(value: Prisma.JsonValue): Record<string, Prisma.JsonValue> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -16,14 +16,25 @@ function jsonString(value: Record<string, Prisma.JsonValue> | null, key: string)
   return typeof field === "string" ? field : "";
 }
 
+function firstProposedDownloadUrl(payload: Record<string, Prisma.JsonValue> | null): string {
+  const dropbox = payload?.dropboxUrls;
+  if (Array.isArray(dropbox) && typeof dropbox[0] === "string") return dropbox[0];
+  const drive = payload?.driveUrls;
+  if (Array.isArray(drive) && typeof drive[0] === "string") return drive[0];
+  return "";
+}
+
 export default async function InboxDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ emailId: string }>;
+  searchParams: Promise<{ clientId?: string }>;
 }) {
   const user = await requireUser();
   assertCan(user.role, "order:write");
   const { emailId } = await params;
+  const query = await searchParams;
   const [message, clients, orders] = await Promise.all([
     prisma.emailMessage.findUnique({
       where: { id: emailId },
@@ -139,10 +150,13 @@ export default async function InboxDetailPage({
             emailMessageId={message.id}
             proposalId={proposal.id}
             proposedKind={proposal.kind}
-            proposedClientId={jsonString(payload, "clientId") || message.clientId}
+            proposedClientId={query.clientId || jsonString(payload, "clientId") || message.clientId}
             proposedOrderId={jsonString(payload, "orderId") || message.orderId}
             proposedTitle={jsonString(payload, "title") || message.subject}
             proposedOrderType={jsonString(payload, "orderType") || "Email intake"}
+            proposedDownloadUrl={firstProposedDownloadUrl(payload)}
+            fromAddress={message.fromAddress}
+            canManageClients={can(user.role, "client:manage")}
             options={options}
           />
         </section>

@@ -6,6 +6,7 @@ import {
   ignoreEmailAction,
   type InboxActionState,
 } from "@/app/(app)/inbox/actions";
+import { AddClientModal } from "@/app/(app)/inbox/add-client-modal";
 import { SubmitButton } from "@/app/(app)/_components/submit-button";
 
 const initialState: InboxActionState = { error: null };
@@ -31,6 +32,9 @@ export function ProposalReviewActions({
   proposedOrderId,
   proposedTitle,
   proposedOrderType,
+  proposedDownloadUrl,
+  fromAddress,
+  canManageClients,
   options,
 }: {
   emailMessageId: string;
@@ -40,6 +44,9 @@ export function ProposalReviewActions({
   proposedOrderId: string | null;
   proposedTitle: string;
   proposedOrderType: string;
+  proposedDownloadUrl: string;
+  fromAddress: string;
+  canManageClients: boolean;
   options: InboxReviewOptions;
 }) {
   const [approvalState, approveAction] = useActionState(approveProposalAction, initialState);
@@ -53,10 +60,13 @@ export function ProposalReviewActions({
           className="rounded-xl border border-indigo-200 bg-indigo-50 p-4"
         >
           <input type="hidden" name="proposalId" value={proposalId} />
+          {proposedDownloadUrl ? (
+            <input type="hidden" name="downloadUrl" value={proposedDownloadUrl} />
+          ) : null}
           <h3 className="font-semibold text-indigo-950">Approve as proposed</h3>
           <p className="mt-1 text-sm text-indigo-800">
-            This creates the proposed order or batch, queues its transfer, and drafts an
-            acknowledgement.
+            This creates the proposed order or batch and queues file download when a source link is
+            present. A receipt acknowledgement was already sent when the email arrived.
           </p>
           <div className="mt-3">
             <SubmitButton label="Approve proposal" pendingLabel="Approving..." />
@@ -68,6 +78,10 @@ export function ProposalReviewActions({
       <form action={approveAction} className="space-y-4 rounded-xl border border-slate-200 p-4">
         <input type="hidden" name="proposalId" value={proposalId} />
         <h3 className="font-semibold text-slate-950">Edit and approve</h3>
+        <p className="text-sm text-slate-600">
+          Saves the order, optional ETA, and download link, then starts file transfer when a link is
+          present.
+        </p>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-1 text-sm font-medium text-slate-700">
             Client
@@ -83,6 +97,20 @@ export function ProposalReviewActions({
                 </option>
               ))}
             </select>
+            {!proposedClientId ? (
+              <>
+                <span className="block text-xs font-normal text-amber-800">
+                  No client matched sender {fromAddress}. Select a client before approving.
+                </span>
+                {canManageClients ? (
+                  <AddClientModal
+                    emailMessageId={emailMessageId}
+                    fromAddress={fromAddress}
+                    suggestedDisplayName=""
+                  />
+                ) : null}
+              </>
+            ) : null}
           </label>
           <label className="space-y-1 text-sm font-medium text-slate-700">
             Title
@@ -111,13 +139,37 @@ export function ProposalReviewActions({
               className="w-full rounded-lg border border-slate-300 px-3 py-2"
             />
           </label>
+          <label className="space-y-1 text-sm font-medium text-slate-700 md:col-span-2">
+            Download link
+            <input
+              name="downloadUrl"
+              type="url"
+              defaultValue={proposedDownloadUrl}
+              placeholder="https://..."
+              className="w-full rounded-lg border border-slate-300 px-3 py-2"
+            />
+            <span className="block text-xs font-normal text-slate-500">
+              Leave blank if none. Prefills from Dropbox/Drive URLs found in the email when present.
+            </span>
+          </label>
+          <label className="space-y-1 text-sm font-medium text-slate-700 md:col-span-2">
+            ETA (optional)
+            <input
+              name="eta"
+              type="datetime-local"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
         </div>
-        <SubmitButton label="Save fields and approve" pendingLabel="Approving..." />
+        <SubmitButton label="Save order and start download" pendingLabel="Approving..." />
         <ActionError error={approvalState.error} />
       </form>
 
       <form action={approveAction} className="space-y-4 rounded-xl border border-slate-200 p-4">
         <input type="hidden" name="proposalId" value={proposalId} />
+        {proposedDownloadUrl ? (
+          <input type="hidden" name="downloadUrl" value={proposedDownloadUrl} />
+        ) : null}
         <h3 className="font-semibold text-slate-950">Link to another order</h3>
         <label className="space-y-1 text-sm font-medium text-slate-700">
           Existing order
@@ -147,6 +199,14 @@ export function ProposalReviewActions({
             <option value="CORRECTION">Correction</option>
           </select>
         </label>
+        <label className="space-y-1 text-sm font-medium text-slate-700">
+          ETA (optional)
+          <input
+            name="eta"
+            type="datetime-local"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2"
+          />
+        </label>
         <SubmitButton label="Link and approve" pendingLabel="Linking..." />
         <ActionError error={approvalState.error} />
       </form>
@@ -155,7 +215,7 @@ export function ProposalReviewActions({
         <input type="hidden" name="emailMessageId" value={emailMessageId} />
         <h3 className="font-semibold text-red-950">Ignore this email</h3>
         <p className="mt-1 text-sm text-red-800">
-          This rejects the pending proposal without creating an order or outbound draft.
+          This rejects the pending proposal without creating an order.
         </p>
         <div className="mt-3">
           <SubmitButton

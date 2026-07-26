@@ -17,6 +17,10 @@
     "./lifecycle": {
       "types": "./dist/lifecycle.d.ts",
       "default": "./dist/lifecycle.js"
+    },
+    "./client-code": {
+      "types": "./dist/client-code.d.ts",
+      "default": "./dist/client-code.js"
     }
   },
   "scripts": {

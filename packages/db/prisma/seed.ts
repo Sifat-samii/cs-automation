@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "@cs/shared";
+import { seedClients } from "../src/seed-clients.ts";
 
 const prisma = new PrismaClient();
 
@@ -17,6 +18,9 @@ async function main(): Promise<void> {
   });
 
   console.warn(`Seeded CS_LEAD account for login ID ${loginId}`);
+
+  const clients = await seedClients(prisma);
+  console.warn(`Seeded clients: created=${clients.created} skipped=${clients.skipped}`);
 }
 
 main()

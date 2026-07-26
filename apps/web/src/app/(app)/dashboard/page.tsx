@@ -49,7 +49,7 @@ export default async function DashboardPage() {
             Create orders, add batches, set ETA, and progress lifecycle status.
           </p>
         </Link>
-        {can(user.role, "client:manage") && (
+        {can(user.role, "client:read") && (
           <Link
             href="/clients"
             className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-indigo-300"

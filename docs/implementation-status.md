@@ -1,13 +1,13 @@
 # Implementation status
 
-| Phase | Name                | Branch                        | Status                     |
-| ----- | ------------------- | ----------------------------- | -------------------------- |
-| 0     | Project foundation  | `feature/project-foundation`  | Complete                   |
-| 1     | Manual order intake | `feature/manual-order-intake` | Complete                   |
-| 2     | File agent          | `feature/file-agent`          | Complete; PR pending       |
-| 3     | Gmail integration   | local implementation tree     | Complete; activation gated |
-| 4     | AI assistance       | `feature/ai-assistance`       | Not started                |
-| 5     | Google Sheets sync  | `feature/google-sheets-sync`  | Not started                |
+| Phase | Name                | Branch                        | Status                          |
+| ----- | ------------------- | ----------------------------- | ------------------------------- |
+| 0     | Project foundation  | `feature/project-foundation`  | Complete                        |
+| 1     | Manual order intake | `feature/manual-order-intake` | Complete                        |
+| 2     | File agent          | `feature/file-agent`          | Complete; PR pending            |
+| 3     | Gmail integration   | local implementation tree     | Complete; activation gated      |
+| 4     | AI assistance       | `feature/ai-assistance`       | Deferred (after Phase 5 Wave A) |
+| 5     | Google Sheets sync  | `feature/google-sheets-sync`  | Wave A + Wave B complete        |
 
 ## Phase 0 checklist
 
@@ -131,8 +131,10 @@ interim only; cutover has not occurred.
 - [x] Fail-closed outbound approval plus HMAC pending/sent machine APIs
 - [x] `FILES_VERIFIED` and `ETA_NOTICE` drafting hooks
 - [x] Inactive, credential-free Gmail poll/send n8n workflow exports
+      (poll uses Schedule + Get Many for reliable manual dry-runs; send uses HTML + no n8n attribution)
 - [x] Local database and full repository quality-gate verification
-- [ ] Live n8n Windows service, shared-mailbox OAuth, and approved email-copy verification
+- [x] Pilot-approved outbound email copy for `ACKNOWLEDGEMENT`, `FILES_VERIFIED`, and `ETA_NOTICE`
+- [ ] Live n8n Windows service and shared-mailbox OAuth verification
 
 ## Phase 3 verification
 
@@ -147,10 +149,10 @@ interim only; cutover has not occurred.
   draft, proposal decision, and email link.
 - Machine security: unsigned and stale ingest requests are rejected; browser cookies do not
   authorise machine routes; the ingest burst limit returns `429`.
-- Outbound security: placeholder drafts cannot be approved; pending atomically claims
-  `APPROVED → SENDING` with `FOR UPDATE SKIP LOCKED`; invalid rows fail in isolation;
-  draft/approved-to-sent is rejected; and sent callbacks are idempotent only for the same Gmail
-  message id.
+- Outbound security: pilot templates render with merge fields; `RECEIPT_ACKNOWLEDGEMENT` and
+  `FILES_VERIFIED` may be system-approved (ADR 0007); drafts that still contain
+  `GATE_BLOCKED_PLACEHOLDER` cannot be human-approved; pending claims `APPROVED` rows with
+  `approvedAt` set using `FOR UPDATE SKIP LOCKED`.
 - Lifecycle: a sent acknowledgement advances `DRAFT → ACKNOWLEDGED`; if files were already
   verified without an ETA it continues to `AWAITING_ETA`, allowing the later ETA setter to draft
   `ETA_NOTICE`.
@@ -159,10 +161,37 @@ interim only; cutover has not occurred.
 - Workflow exports: both JSON files parse successfully and remain inactive with no OAuth token or
   HMAC secret embedded.
 
-Phase 3 is implemented and locally verified at the user's direction. Production activation remains
-blocked because Phase 2 is not merged into `develop`, n8n is not registered as a Windows service,
-shared-mailbox Gmail OAuth is not evidenced, and all three client-facing templates retain
-`GATE_BLOCKED_PLACEHOLDER`. Those gates are fail-closed: no placeholder draft can become
-`APPROVED`, so the send workflow cannot receive it.
+Phase 3 is implemented and locally verified at the user's direction. Pilot-approved outbound
+templates are in place. Production activation remains blocked because n8n is not registered as a
+Windows service and shared-mailbox Gmail OAuth is not evidenced. Drafts that still contain
+`GATE_BLOCKED_PLACEHOLDER` remain fail-closed and cannot become `APPROVED`.
+
+## Phase 5 Wave A checklist
+
+- [x] Client code derivation helpers (`deriveClientCode`, `allocateUniqueClientCode`)
+- [x] Idempotent seed of the approved client display-name list
+- [x] `client:read` for Lead + Executive; `client:manage` remains Lead-only
+- [x] Order status buckets (Past / In production / Unassigned)
+- [x] Clients list with bucket counts and `/clients/[id]` detail sections
+- [x] Inbox “New client” modal creating clients via `createClient` for unknown senders
+- [x] ADR 0008 (clients before Sheets; AI deferred; layout gate for Wave B)
+- [x] Live Google Sheet layout capture (`docs/integrations/google-sheet-layout.md`)
+- [x] Wave B outbox, HMAC mirror APIs, n8n Sheets workflow
+
+## Phase 5 Wave B checklist
+
+- [x] Layout: Daily Order Pipeline — write Date / Client / Order Name / Quantity only; match on Order Name
+- [x] Blank-row grouping: consecutive same-client+date claims, then one blank row
+- [x] `SheetMirrorOutbox` + transactional enqueue on order create
+- [x] HMAC `/api/mirror/pending` and `/api/mirror/:id/done`
+- [x] Inactive `n8n/workflows/google-sheets-mirror.json`
+- [x] `scripts/reconcile-sheet-mirror.mjs` CSV compare helper
+- [ ] Live n8n OAuth + copy-workbook dry-run evidence (operator)
+
+## Phase 5 Wave A notes
+
+- Branch: `feature/google-sheets-sync`.
+- Seeded `folderName` equals `code` until CS rebinds folders on the shares.
+- Sheets is one-way from Postgres; Status/QC columns remain human-owned on the sheet.
 
 Last updated: 2026-07-26
