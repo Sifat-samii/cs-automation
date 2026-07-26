@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useMemo, useState } from "react";
-import { deriveClientCode } from "@cs/shared";
+import { deriveClientCode } from "@cs/shared/client-code";
 import {
   createClientFromInboxAction,
   type InboxClientActionState,

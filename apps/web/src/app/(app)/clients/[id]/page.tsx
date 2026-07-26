@@ -9,11 +9,7 @@ import {
   UNASSIGNED_ORDER_STATUSES,
 } from "@/lib/clients/buckets";
 
-export default async function ClientDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   assertCan(user.role, "client:read");
   const { id } = await params;
@@ -49,7 +45,10 @@ export default async function ClientDetailPage({
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/clients" className="text-sm font-semibold text-indigo-700 hover:text-indigo-900">
+        <Link
+          href="/clients"
+          className="text-sm font-semibold text-indigo-700 hover:text-indigo-900"
+        >
           ← Back to clients
         </Link>
         <p className="mt-3 font-mono text-xs font-bold tracking-wider text-indigo-700">

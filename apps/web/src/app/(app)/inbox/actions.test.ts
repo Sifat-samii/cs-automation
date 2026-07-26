@@ -100,9 +100,7 @@ describe("createClientFromInboxAction", () => {
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/inbox");
     expect(mocks.revalidatePath).toHaveBeenCalledWith(`/inbox/${emailMessageId}`);
     expect(mocks.redirect).toHaveBeenCalledWith(
-      expect.stringMatching(
-        new RegExp(`^/inbox/${emailMessageId}\\?clientId=${client?.id}$`),
-      ),
+      expect.stringMatching(new RegExp(`^/inbox/${emailMessageId}\\?clientId=${client?.id}$`)),
     );
   });
 

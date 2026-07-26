@@ -1,11 +1,7 @@
 import type { UserRole } from "@cs/db";
 
 export type Permission =
-  | "user:manage"
-  | "audit:read"
-  | "client:read"
-  | "client:manage"
-  | "order:write";
+  "user:manage" | "audit:read" | "client:read" | "client:manage" | "order:write";
 
 const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
   CS_EXECUTIVE: ["order:write", "client:read"],

@@ -10,7 +10,10 @@ export function deriveClientCode(displayName: string): string {
     .trim()
     .split(/[^A-Za-z0-9]+/u)
     .filter((part) => part.length > 0);
-  let compact = words.join("").toUpperCase().replace(/[^A-Z0-9]/gu, "");
+  let compact = words
+    .join("")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/gu, "");
   if (compact.length === 0) {
     compact = "CLIENT";
   }
@@ -23,12 +26,13 @@ export function deriveClientCode(displayName: string): string {
 /**
  * Return `base` if unused; otherwise append 2, 3, … keeping total length ≤ 12.
  */
-export function allocateUniqueClientCode(
-  base: string,
-  existingCodes: ReadonlySet<string>,
-): string {
-  const normalised = base.toUpperCase().replace(/[^A-Z0-9]/gu, "").slice(0, CODE_MAX);
-  const seed = normalised.length >= CODE_MIN ? normalised : deriveClientCode(normalised || "CLIENT");
+export function allocateUniqueClientCode(base: string, existingCodes: ReadonlySet<string>): string {
+  const normalised = base
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/gu, "")
+    .slice(0, CODE_MAX);
+  const seed =
+    normalised.length >= CODE_MIN ? normalised : deriveClientCode(normalised || "CLIENT");
   if (!existingCodes.has(seed)) {
     return seed;
   }
@@ -36,7 +40,11 @@ export function allocateUniqueClientCode(
     const suffixText = String(suffix);
     const prefixLen = Math.max(CODE_MIN, Math.min(CODE_MAX - suffixText.length, seed.length));
     const candidate = `${seed.slice(0, prefixLen)}${suffixText}`;
-    if (candidate.length >= CODE_MIN && candidate.length <= CODE_MAX && !existingCodes.has(candidate)) {
+    if (
+      candidate.length >= CODE_MIN &&
+      candidate.length <= CODE_MAX &&
+      !existingCodes.has(candidate)
+    ) {
       return candidate;
     }
   }

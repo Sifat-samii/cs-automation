@@ -150,9 +150,7 @@ export default async function InboxDetailPage({
             emailMessageId={message.id}
             proposalId={proposal.id}
             proposedKind={proposal.kind}
-            proposedClientId={
-              query.clientId || jsonString(payload, "clientId") || message.clientId
-            }
+            proposedClientId={query.clientId || jsonString(payload, "clientId") || message.clientId}
             proposedOrderId={jsonString(payload, "orderId") || message.orderId}
             proposedTitle={jsonString(payload, "title") || message.subject}
             proposedOrderType={jsonString(payload, "orderType") || "Email intake"}
