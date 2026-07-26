@@ -74,7 +74,6 @@ export function ClientsTable({ clients }: { clients: readonly ClientTableRow[] }
             <tr>
               <th className="px-4 py-3 font-semibold">Code</th>
               <th className="px-4 py-3 font-semibold">Name</th>
-              <th className="px-4 py-3 font-semibold">Folder</th>
               <th className="px-4 py-3 font-semibold">Folder path</th>
               <th className="px-4 py-3 font-semibold">Unassigned</th>
               <th className="px-4 py-3 font-semibold">In production</th>
@@ -100,7 +99,6 @@ export function ClientsTable({ clients }: { clients: readonly ClientTableRow[] }
                   {client.code}
                 </td>
                 <td className="px-4 py-3 font-medium text-slate-950">{client.displayName}</td>
-                <td className="px-4 py-3 text-slate-700">{client.folderName}</td>
                 <td className="px-4 py-3">
                   <div className="flex max-w-md items-start gap-2">
                     <span className="break-all text-xs text-slate-600">{client.folderPath}</span>
