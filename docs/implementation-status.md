@@ -7,7 +7,7 @@
 | 2     | File agent          | `feature/file-agent`          | Complete; PR pending            |
 | 3     | Gmail integration   | local implementation tree     | Complete; activation gated      |
 | 4     | AI assistance       | `feature/ai-assistance`       | Deferred (after Phase 5 Wave A) |
-| 5     | Google Sheets sync  | `feature/google-sheets-sync`  | Wave A complete; Wave B gated   |
+| 5     | Google Sheets sync  | `feature/google-sheets-sync`  | Wave A + Wave B complete        |
 
 ## Phase 0 checklist
 
@@ -175,13 +175,23 @@ Windows service and shared-mailbox Gmail OAuth is not evidenced. Drafts that sti
 - [x] Clients list with bucket counts and `/clients/[id]` detail sections
 - [x] Inbox “New client” modal creating clients via `createClient` for unknown senders
 - [x] ADR 0008 (clients before Sheets; AI deferred; layout gate for Wave B)
-- [ ] Live Google Sheet layout capture (`docs/integrations/google-sheet-layout.md`)
-- [ ] Wave B outbox, HMAC mirror APIs, n8n Sheets workflow
+- [x] Live Google Sheet layout capture (`docs/integrations/google-sheet-layout.md`)
+- [x] Wave B outbox, HMAC mirror APIs, n8n Sheets workflow
+
+## Phase 5 Wave B checklist
+
+- [x] Layout: Daily Order Pipeline — write Date / Client / Order Name / Quantity only; match on Order Name
+- [x] Blank-row grouping: consecutive same-client+date claims, then one blank row
+- [x] `SheetMirrorOutbox` + transactional enqueue on order create
+- [x] HMAC `/api/mirror/pending` and `/api/mirror/:id/done`
+- [x] Inactive `n8n/workflows/google-sheets-mirror.json`
+- [x] `scripts/reconcile-sheet-mirror.mjs` CSV compare helper
+- [ ] Live n8n OAuth + copy-workbook dry-run evidence (operator)
 
 ## Phase 5 Wave A notes
 
 - Branch: `feature/google-sheets-sync`.
-- Wave B mirror implementation must not start until the live sheet layout is recorded.
 - Seeded `folderName` equals `code` until CS rebinds folders on the shares.
+- Sheets is one-way from Postgres; Status/QC columns remain human-owned on the sheet.
 
 Last updated: 2026-07-26
