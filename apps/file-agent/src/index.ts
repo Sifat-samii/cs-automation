@@ -25,3 +25,11 @@ export type {
   StagingVerificationInput,
   StagingVerificationResult,
 } from "./staging.js";
+export { PortTreeCopyStrategy, RobocopyTreeCopyStrategy, TransferPublisher } from "./transfer.js";
+export type {
+  OrderMarker,
+  PublishedArtifact,
+  PublishedTransfer,
+  TransferLocation,
+  TreeCopyStrategy,
+} from "./transfer.js";
