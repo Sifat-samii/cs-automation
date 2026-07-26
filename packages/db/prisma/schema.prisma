@@ -12,6 +12,47 @@ enum UserRole {
   CS_LEAD
 }
 
+enum ClientIdentityKind {
+  ADDRESS
+  DOMAIN
+}
+
+enum OrderStatus {
+  DRAFT
+  ACKNOWLEDGED
+  AWAITING_ETA
+  ETA_SENT
+  IN_PRODUCTION
+  CLOSED
+  CANCELLED
+}
+
+enum OrderBatchKind {
+  INITIAL
+  ADDITIONAL
+  SAMPLE
+  CORRECTION
+}
+
+enum OrderBatchStatus {
+  PENDING
+  DOWNLOADING
+  STAGED
+  WRITTEN_BACKUP
+  COPIED_PRODUCTION
+  VERIFIED
+  FAILED
+  CANCELLED
+}
+
+enum SourceLinkKind {
+  DROPBOX
+  GDRIVE
+  ATTACHMENT
+  MANUAL_DROP
+  OTHER
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   loginId      String   @unique
@@ -55,4 +96,103 @@ model AuditEvent {
   @@index([entityType, entityId])
   @@index([occurredAt])
   @@index([correlationId])
+}
+
+model Client {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique
+  displayName String
+  folderName  String   @unique
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  identities ClientIdentity[]
+  orders     Order[]
+}
+
+model ClientIdentity {
+  id       String             @id @default(uuid()) @db.Uuid
+  clientId String             @db.Uuid
+  client   Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  kind     ClientIdentityKind
+  value    String
+
+  @@unique([kind, value])
+  @@index([clientId])
+}
+
+model Order {
+  id             String      @id @default(uuid()) @db.Uuid
+  code           String      @unique
+  clientId       String      @db.Uuid
+  client         Client      @relation(fields: [clientId], references: [id])
+  title          String
+  orderType      String
+  quantity       Int?
+  status         OrderStatus @default(DRAFT)
+  eta            DateTime?   @db.Timestamptz(6)
+  etaNote        String?
+  gmailThreadId  String?     @unique
+  folderName     String
+  backupPath     String
+  productionPath String
+  cancelReason   String?
+  createdById    String      @db.Uuid
+  createdAt      DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime    @updatedAt @db.Timestamptz(6)
+
+  batches OrderBatch[]
+  events  OrderEvent[]
+
+  @@index([status])
+  @@index([clientId, createdAt])
+}
+
+model OrderBatch {
+  id            String           @id @default(uuid()) @db.Uuid
+  orderId       String           @db.Uuid
+  order         Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sequence      Int
+  kind          OrderBatchKind
+  status        OrderBatchStatus @default(PENDING)
+  subfolder     String
+  notes         String?
+  failureReason String?
+  createdById   String           @db.Uuid
+  createdAt     DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime         @updatedAt @db.Timestamptz(6)
+
+  sourceLinks SourceLink[]
+
+  @@unique([orderId, sequence])
+  @@index([status])
+}
+
+model SourceLink {
+  id        String         @id @default(uuid()) @db.Uuid
+  batchId   String         @db.Uuid
+  batch     OrderBatch     @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  kind      SourceLinkKind
+  url       String?
+  localHint String?
+  addedById String         @db.Uuid
+  createdAt DateTime       @default(now()) @db.Timestamptz(6)
+
+  @@index([batchId])
+}
+
+model OrderEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  orderId       String   @db.Uuid
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  batchId       String?  @db.Uuid
+  type          String
+  payload       Json     @default("{}")
+  actorUserId   String?  @db.Uuid
+  actorLabel    String
+  correlationId String   @db.Uuid
+  occurredAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([orderId, occurredAt])
 }

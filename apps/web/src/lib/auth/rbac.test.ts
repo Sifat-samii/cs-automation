@@ -12,6 +12,16 @@ describe("role permissions", () => {
     expect(can("CS_EXECUTIVE", "audit:read")).toBe(false);
   });
 
+  it("grants client management to CS_LEAD only", () => {
+    expect(can("CS_LEAD", "client:manage")).toBe(true);
+    expect(can("CS_EXECUTIVE", "client:manage")).toBe(false);
+  });
+
+  it("grants order writing to both CS roles", () => {
+    expect(can("CS_LEAD", "order:write")).toBe(true);
+    expect(can("CS_EXECUTIVE", "order:write")).toBe(true);
+  });
+
   it("assertCan passes for a permitted role", () => {
     expect(() => assertCan("CS_LEAD", "user:manage")).not.toThrow();
   });
