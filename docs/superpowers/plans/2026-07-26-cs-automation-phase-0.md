@@ -1329,7 +1329,7 @@ git commit -m "feat(db): add User, Session, and append-only AuditEvent schema"
   - `hashSessionToken(token: string): string` — SHA-256 hex.
   - `createSession(db: DbClient, input: { userId: string; ttlHours: number; now?: Date }): Promise<{ token: string; expiresAt: Date }>`
   - `validateSessionToken(db: DbClient, token: string, now?: Date): Promise<SessionUser | null>`
-  - `type SessionUser = { userId: string; email: string; displayName: string; role: UserRole }`
+  - `type SessionUser = { userId: string; loginId: string; displayName: string; role: UserRole }`
   - `invalidateSession(db: DbClient, token: string): Promise<void>`
   - `invalidateAllSessionsForUser(db: DbClient, userId: string): Promise<void>`
 
@@ -1381,7 +1381,7 @@ const now = new Date("2026-07-26T00:00:00.000Z");
 async function makeUser() {
   return prisma.user.create({
     data: {
-      email: "exec@example.com",
+      loginId: "2061",
       displayName: "Test Executive",
       passwordHash: await hashPassword("a-long-enough-password"),
       role: "CS_EXECUTIVE",
@@ -1420,7 +1420,7 @@ describe("session management", () => {
     const resolved = await validateSessionToken(prisma, token, now);
     expect(resolved).toEqual({
       userId: user.id,
-      email: "exec@example.com",
+      loginId: "2061",
       displayName: "Test Executive",
       role: "CS_EXECUTIVE",
     });
@@ -1482,7 +1482,7 @@ import type { DbClient, UserRole } from "@cs/db";
 
 export type SessionUser = {
   userId: string;
-  email: string;
+  loginId: string;
   displayName: string;
   role: UserRole;
 };
@@ -1541,7 +1541,7 @@ export async function validateSessionToken(
 
   return {
     userId: session.user.id,
-    email: session.user.email,
+    loginId: session.user.loginId,
     displayName: session.user.displayName,
     role: session.user.role,
   };
@@ -1875,12 +1875,16 @@ git commit -m "feat(auth): add role permissions and transactional audit helper"
 **Files:**
 
 - Create/modify: `apps/web/next.config.ts`, `apps/web/package.json`
+- Modify: `packages/db/prisma/schema.prisma`, `packages/db/prisma/seed.ts`
+- Create: `packages/db/prisma/migrations/20260726025933_add_login_id/migration.sql`
+- Modify: `apps/web/src/lib/auth/session.ts`, `apps/web/src/lib/auth/session.test.ts`
+- Modify: `apps/web/src/lib/audit.test.ts`
 - Create: `apps/web/src/app/layout.tsx`, `apps/web/src/app/page.tsx`
 - Create: `apps/web/src/app/login/page.tsx`, `apps/web/src/app/login/actions.ts`
 - Create: `apps/web/src/app/(app)/layout.tsx`, `apps/web/src/app/(app)/dashboard/page.tsx`
 - Create: `apps/web/src/app/(app)/loading.tsx`, `apps/web/src/app/(app)/error.tsx`
 - Create: `apps/web/src/lib/auth/current-user.ts`
-- Create: `apps/web/src/middleware.ts`
+- Create: `apps/web/src/proxy.ts` (Next.js 16 name for the deprecated `middleware.ts` convention)
 
 **Interfaces:**
 
@@ -1889,6 +1893,24 @@ git commit -m "feat(auth): add role permissions and transactional audit helper"
   - `getCurrentUser(): Promise<SessionUser | null>`
   - `requireUser(): Promise<SessionUser>` — redirects to `/login` when absent.
   - Server actions `signIn(prevState, formData)` and `signOut()`.
+
+- [ ] **Step 0: Apply the approved staff-ID login change**
+
+The owner changed the Phase 0 login identifier from email to the internal staff ID after Task 7.
+Preserve the already-applied initial migration and add a forward migration instead of rewriting
+history. Add unique, required `User.loginId`; make `User.email` optional for future contact use;
+and backfill any existing account's login ID from its previously required unique email before
+enforcing the new constraint.
+
+Update `SessionUser` to expose `loginId` instead of email. First change the session test to create
+an account with login ID `2061` and no email, then confirm it fails because the old Prisma schema
+still requires email. Apply the new migration to development and test databases, regenerate the
+client, and confirm the session test passes.
+
+The temporary Phase 0 bootstrap account is login ID `2061`, display name `Sifat Sami`, role
+`CS_LEAD`, with the owner-approved common initial password. The seed hashes that password with
+Argon2id and never stores or renders its plaintext. This default is strictly temporary for the
+office-LAN bootstrap and must be replaced before broader or untrusted-network access.
 
 - [ ] **Step 1: Mark the native and Prisma packages external to the server bundle**
 
@@ -1930,14 +1952,19 @@ export async function requireUser(): Promise<SessionUser> {
 }
 ```
 
-- [ ] **Step 3: Write `middleware.ts`**
+- [ ] **Step 3: Write `proxy.ts`**
+
+Next.js 16.2 deprecates the `middleware.ts` convention and requires the equivalent
+`proxy.ts` convention for new code. The behavior remains the same: this is only an
+optimistic cookie-presence redirect, while `requireUser()` performs real authentication.
 
 ```typescript
+// apps/web/src/proxy.ts
 import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login"];
 
-export function middleware(request: NextRequest): NextResponse {
+export function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
   if (PUBLIC_PATHS.some((path) => pathname.startsWith(path))) return NextResponse.next();
 
@@ -1956,7 +1983,10 @@ export const config = {
 };
 ```
 
-The middleware only checks that a cookie is present. It deliberately does not validate the session, because middleware runs in the Edge runtime where Prisma cannot open a database connection. Real validation happens in `requireUser()` inside the protected layout. Treating the middleware as the security boundary would be the mistake here; it is only a cheap redirect for the common case.
+The proxy only checks that a cookie is present. It deliberately does not access the database or
+validate the session. Real validation happens in `requireUser()` inside the protected layout.
+Treating the proxy as the security boundary would be the mistake here; it is only a cheap redirect
+for the common case.
 
 - [ ] **Step 4: Write the sign-in server action**
 
@@ -1974,7 +2004,7 @@ import { recordAudit } from "@/lib/audit";
 import { createSession, invalidateSession } from "@/lib/auth/session";
 
 const credentials = z.object({
-  email: z.string().trim().toLowerCase().min(3).max(320),
+  loginId: z.string().trim().min(1).max(64),
   password: z.string().min(1).max(1024),
 });
 
@@ -1987,24 +2017,24 @@ const DUMMY_HASH_PROMISE = hashPassword("account-enumeration-guard");
 export async function signIn(_prev: SignInState, formData: FormData): Promise<SignInState> {
   const env = parseServerEnv(process.env);
   const parsed = credentials.safeParse({
-    email: formData.get("email"),
+    loginId: formData.get("loginId"),
     password: formData.get("password"),
   });
 
-  if (!parsed.success) return { error: "Enter your email address and password." };
+  if (!parsed.success) return { error: "Enter your ID and password." };
 
   const correlationId = randomUUID();
-  const user = await prisma.user.findUnique({ where: { email: parsed.data.email } });
+  const user = await prisma.user.findUnique({ where: { loginId: parsed.data.loginId } });
 
   if (!user || !user.isActive) {
     await verifyPassword(await DUMMY_HASH_PROMISE, parsed.data.password);
     await recordAudit(prisma, {
       correlationId,
       actorUserId: null,
-      actorLabel: parsed.data.email,
+      actorLabel: parsed.data.loginId,
       action: "user.sign_in_failed",
       entityType: "User",
-      entityId: parsed.data.email,
+      entityId: parsed.data.loginId,
       metadata: { reason: "unknown_or_inactive" },
     });
     return { error: "Those credentials are not valid." };
@@ -2014,7 +2044,7 @@ export async function signIn(_prev: SignInState, formData: FormData): Promise<Si
     await recordAudit(prisma, {
       correlationId,
       actorUserId: user.id,
-      actorLabel: user.email,
+      actorLabel: user.loginId,
       action: "user.sign_in_failed",
       entityType: "User",
       entityId: user.id,
@@ -2031,7 +2061,7 @@ export async function signIn(_prev: SignInState, formData: FormData): Promise<Si
   await recordAudit(prisma, {
     correlationId,
     actorUserId: user.id,
-    actorLabel: user.email,
+    actorLabel: user.loginId,
     action: "user.signed_in",
     entityType: "User",
     entityId: user.id,
@@ -2060,7 +2090,8 @@ export async function signOut(): Promise<void> {
 }
 ```
 
-Both failure branches return the same message, so the form never reveals whether an address is registered. Both are audited, which is what makes a brute-force attempt visible later.
+Both failure branches return the same message, so the form never reveals whether an ID is
+registered. Both are audited, which is what makes a brute-force attempt visible later.
 
 - [ ] **Step 5: Write the login page**
 
@@ -2098,18 +2129,19 @@ export default function LoginPage() {
       >
         <div>
           <h1 className="text-lg font-semibold text-slate-900">CS Automation</h1>
-          <p className="text-sm text-slate-500">Sign in with your work account.</p>
+          <p className="text-sm text-slate-500">Sign in with your staff ID.</p>
         </div>
 
         <div className="space-y-1">
-          <label htmlFor="email" className="text-sm font-medium text-slate-700">
-            Email
+          <label htmlFor="loginId" className="text-sm font-medium text-slate-700">
+            ID
           </label>
           <input
-            id="email"
-            name="email"
-            type="email"
+            id="loginId"
+            name="loginId"
+            type="text"
             autoComplete="username"
+            inputMode="numeric"
             required
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
           />
@@ -2221,7 +2253,7 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-slate-900">Dashboard</h1>
-        <p className="text-sm text-slate-500">Signed in as {user.email}</p>
+        <p className="text-sm text-slate-500">Signed in with ID {user.loginId}</p>
       </div>
 
       <div className="rounded-lg border border-dashed border-slate-300 bg-white p-10 text-center">
@@ -2250,8 +2282,6 @@ export default function RootPage() {
 - [ ] **Step 8: Verify the flow manually**
 
 ```powershell
-$env:SEED_ADMIN_EMAIL = "lead@yourcompany.com"
-$env:SEED_ADMIN_PASSWORD = "a-strong-passphrase"
 npm run db:seed
 npm run dev --workspace @cs/web
 ```

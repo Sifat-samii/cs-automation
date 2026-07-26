@@ -75,7 +75,7 @@ flowchart TD
 - `TransferJob` — leased queue row: kind, attempts, lease expiry, owner, byte progress, last error, retryable flag.
 - `FileArtifact` — relative path, size, and checksum per stage; the manifest that makes verification real.
 - `OutboundEmail` — draft, template, approver, idempotency key, Gmail thread and sent message ID.
-- `User`, `Session`, `AuditEvent` (append-only).
+- `User` (unique staff login ID, optional contact email), `Session`, `AuditEvent` (append-only).
 
 Order status and batch status are separate: the order tracks the client relationship, the batch tracks file movement.
 

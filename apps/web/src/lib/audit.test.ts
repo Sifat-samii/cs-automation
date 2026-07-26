@@ -9,6 +9,7 @@ const correlationId = "22222222-2222-4222-8222-222222222222";
 async function makeUser() {
   return prisma.user.create({
     data: {
+      loginId: "9001",
       email: "lead@example.com",
       displayName: "Test Lead",
       passwordHash: await hashPassword("a-long-enough-password"),
@@ -31,7 +32,7 @@ describe("recordAudit", () => {
     await recordAudit(prisma, {
       correlationId,
       actorUserId: user.id,
-      actorLabel: user.email,
+      actorLabel: user.loginId,
       action: "user.signed_in",
       entityType: "User",
       entityId: user.id,
@@ -78,7 +79,7 @@ describe("recordAudit", () => {
         await recordAudit(tx, {
           correlationId,
           actorUserId: user.id,
-          actorLabel: user.email,
+          actorLabel: user.loginId,
           action: "user.renamed",
           entityType: "User",
           entityId: user.id,
@@ -97,7 +98,7 @@ describe("recordAudit", () => {
     await recordAudit(prisma, {
       correlationId,
       actorUserId: user.id,
-      actorLabel: user.email,
+      actorLabel: user.loginId,
       action: "user.signed_in",
       entityType: "User",
       entityId: user.id,
@@ -109,6 +110,6 @@ describe("recordAudit", () => {
 
     const event = await prisma.auditEvent.findFirstOrThrow();
     expect(event.actorUserId).toBe(user.id);
-    expect(event.actorLabel).toBe("lead@example.com");
+    expect(event.actorLabel).toBe("9001");
   });
 });

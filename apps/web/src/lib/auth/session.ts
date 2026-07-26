@@ -3,7 +3,7 @@ import type { DbClient, UserRole } from "@cs/db";
 
 export type SessionUser = {
   userId: string;
-  email: string;
+  loginId: string;
   displayName: string;
   role: UserRole;
 };
@@ -62,7 +62,7 @@ export async function validateSessionToken(
 
   return {
     userId: session.user.id,
-    email: session.user.email,
+    loginId: session.user.loginId,
     displayName: session.user.displayName,
     role: session.user.role,
   };

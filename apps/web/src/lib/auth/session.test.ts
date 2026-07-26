@@ -16,7 +16,7 @@ const now = new Date("2026-07-26T00:00:00.000Z");
 async function makeUser() {
   return prisma.user.create({
     data: {
-      email: "exec@example.com",
+      loginId: "2061",
       displayName: "Test Executive",
       passwordHash: await hashPassword("a-long-enough-password"),
       role: "CS_EXECUTIVE",
@@ -55,7 +55,7 @@ describe("session management", () => {
     const resolved = await validateSessionToken(prisma, token, now);
     expect(resolved).toEqual({
       userId: user.id,
-      email: "exec@example.com",
+      loginId: "2061",
       displayName: "Test Executive",
       role: "CS_EXECUTIVE",
     });
