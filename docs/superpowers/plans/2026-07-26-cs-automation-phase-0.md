@@ -107,12 +107,14 @@ Rationale for the split: `packages/shared` holds the logic most likely to cause 
 ### Task 1: Repository foundation, design spec, and ADRs
 
 **Files:**
+
 - Create: `.gitignore`, `.gitattributes`, `.editorconfig`, `README.md`
 - Create: `docs/specs/2026-07-26-cs-automation-design.md`
 - Create: `docs/project-context.md`, `docs/architecture.md`, `docs/risks.md`, `docs/unresolved-questions.md`, `docs/implementation-status.md`
 - Create: `docs/decisions/0001-postgresql-is-source-of-truth.md` through `0005-order-folder-naming.md`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: the `docs/` tree that every later task appends to, and the git branch structure `main`, `develop`, `feature/project-foundation`.
 
@@ -232,11 +234,13 @@ git commit -m "docs: add design spec, ADRs, and repository conventions"
 ### Task 2: Monorepo tooling
 
 **Files:**
+
 - Create: `package.json`, `tsconfig.base.json`, `eslint.config.mjs`, `.prettierrc.json`, `vitest.config.ts`
 - Create: `packages/shared/package.json`, `packages/shared/tsconfig.json`, `packages/shared/src/index.ts`
 - Test: `packages/shared/src/smoke.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing from Task 1 except the repository itself.
 - Produces: the workspace scripts every later task runs — `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm test`, `npm run build` — and the `@cs/shared` package name that `apps/web` imports.
 
@@ -250,7 +254,9 @@ git commit -m "docs: add design spec, ADRs, and repository conventions"
   "engines": { "node": ">=24" },
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
-    "typecheck": "tsc --build --force; npm run typecheck --workspace @cs/web --if-present",
+    "typecheck": "run-s typecheck:packages typecheck:web",
+    "typecheck:packages": "tsc --build --force",
+    "typecheck:web": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -261,17 +267,21 @@ git commit -m "docs: add design spec, ADRs, and repository conventions"
     "db:migrate": "npm run migrate --workspace @cs/db",
     "db:migrate:deploy": "npm run migrate:deploy --workspace @cs/db",
     "db:seed": "npm run seed --workspace @cs/db",
-    "verify": "npm run typecheck; npm run lint; npm run format:check; npm test; npm run build"
+    "verify": "run-s typecheck lint format:check test build"
   }
 }
 ```
 
-Note that `verify` uses `;` rather than `&&`, so it runs every check and reports all failures instead of stopping at the first. On PowerShell 5.1 `&&` is a parse error anyway.
+The original semicolon-separated scripts fail because npm executes package scripts through `cmd.exe`
+on Windows, where `;` is not a command separator. Use the cross-platform `run-s` binary from
+`npm-run-all2` so typecheck and verification stay sequential without using `&&`. The workspace
+typecheck uses `--workspaces --if-present` because npm 12 errors on a nonexistent named `@cs/web`
+workspace before Task 6 creates it.
 
 - [ ] **Step 2: Install root development dependencies**
 
 ```powershell
-npm install -D typescript @types/node vitest eslint @eslint/js typescript-eslint prettier dotenv
+npm install -D typescript @types/node vitest eslint @eslint/js typescript-eslint prettier dotenv npm-run-all2
 ```
 
 - [ ] **Step 3: Create `tsconfig.base.json`**
@@ -302,12 +312,15 @@ npm install -D typescript @types/node vitest eslint @eslint/js typescript-eslint
 
 - [ ] **Step 3b: Create the root `tsconfig.json`**
 
-`tsc --build` needs a root project to build from. It references only the two library packages, because `apps/web` uses the non-composite tsconfig that Next.js generates and cannot participate in project references.
+`tsc --build` needs a root project to build from. During Task 2 it references only
+`packages/shared`; the `packages/db` reference is added in Task 5 after that task creates
+`packages/db/tsconfig.json`. This deferral fixes the original plan sequencing defect. `apps/web`
+uses the non-composite tsconfig that Next.js generates and cannot participate in project references.
 
 ```json
 {
   "files": [],
-  "references": [{ "path": "./packages/shared" }, { "path": "./packages/db" }]
+  "references": [{ "path": "./packages/shared" }]
 }
 ```
 
@@ -448,12 +461,14 @@ git commit -m "chore: set up npm workspaces, TypeScript, ESLint, Prettier, and V
 ### Task 3: Validated environment configuration
 
 **Files:**
+
 - Create: `packages/shared/src/env.ts`
 - Test: `packages/shared/src/env.test.ts`
 - Modify: `packages/shared/src/index.ts`
 - Create: `.env.example`
 
 **Interfaces:**
+
 - Consumes: `packageName` export pattern from Task 2.
 - Produces:
   - `serverEnvSchema: ZodType<ServerEnv>`
@@ -663,11 +678,13 @@ git commit -m "feat(shared): add Zod-validated environment configuration"
 ### Task 4: Cryptographic primitives — HMAC signing and password hashing
 
 **Files:**
+
 - Create: `packages/shared/src/hmac.ts`, `packages/shared/src/password.ts`
 - Test: `packages/shared/src/hmac.test.ts`, `packages/shared/src/password.test.ts`
 - Modify: `packages/shared/src/index.ts`, `packages/shared/package.json`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces:
   - `signRequest(input: { secret: string; timestamp: string; body: string }): string` — lowercase hex SHA-256 HMAC.
@@ -714,7 +731,13 @@ describe("verifyRequest", () => {
 
   it("rejects a tampered body", () => {
     const signature = signRequest({ secret, timestamp, body });
-    const result = verifyRequest({ secret, timestamp, body: '{"gmailMessageId":"evil"}', signature, now });
+    const result = verifyRequest({
+      secret,
+      timestamp,
+      body: '{"gmailMessageId":"evil"}',
+      signature,
+      now,
+    });
     expect(result).toEqual({ ok: false, reason: "mismatch" });
   });
 
@@ -752,7 +775,9 @@ describe("verifyRequest", () => {
   });
 
   it("rejects a non-numeric timestamp", () => {
-    expect(verifyRequest({ secret, timestamp: "yesterday", body, signature: "a".repeat(64), now })).toEqual({
+    expect(
+      verifyRequest({ secret, timestamp: "yesterday", body, signature: "a".repeat(64), now }),
+    ).toEqual({
       ok: false,
       reason: "malformed",
     });
@@ -913,6 +938,7 @@ git commit -m "feat(shared): add HMAC request signing and argon2id password hash
 ### Task 5: Database schema, append-only audit, and test harness
 
 **Files:**
+
 - Create: `packages/db/package.json`, `packages/db/tsconfig.json`
 - Create: `packages/db/prisma/schema.prisma`
 - Create: `packages/db/prisma/migrations/<timestamp>_init/migration.sql` (generated, then hand-edited)
@@ -922,6 +948,7 @@ git commit -m "feat(shared): add HMAC request signing and argon2id password hash
 - Test: `packages/db/src/audit-immutability.test.ts`
 
 **Interfaces:**
+
 - Consumes: `DATABASE_URL` validated in Task 3.
 - Produces:
   - `prisma: PrismaClient` — the shared singleton, exported from `@cs/db`.
@@ -1269,11 +1296,13 @@ git commit -m "feat(db): add User, Session, and append-only AuditEvent schema"
 ### Task 6: Next.js workspace and session management
 
 **Files:**
+
 - Create: `apps/web/` (scaffolded by `create-next-app`)
 - Create: `apps/web/src/lib/auth/session.ts`
 - Test: `apps/web/src/lib/auth/session.test.ts`
 
 **Interfaces:**
+
 - Consumes: `prisma`, `DbClient`, `UserRole` from `@cs/db`; `resetDatabase` from `@cs/db/testing`; `hashPassword` from `@cs/shared`.
 - Produces:
   - `generateSessionToken(): string` — 32 random bytes, base64url.
@@ -1517,10 +1546,12 @@ git commit -m "feat(web): scaffold Next.js app and add hashed-token session mana
 ### Task 7: Role permissions and the transactional audit helper
 
 **Files:**
+
 - Create: `apps/web/src/lib/auth/rbac.ts`, `apps/web/src/lib/audit.ts`
 - Test: `apps/web/src/lib/auth/rbac.test.ts`, `apps/web/src/lib/audit.test.ts`
 
 **Interfaces:**
+
 - Consumes: `DbClient`, `prisma`, `UserRole` from `@cs/db`; `resetDatabase` from `@cs/db/testing`; `hashPassword` from `@cs/shared`.
 - Produces:
   - `type Permission = "user:manage" | "audit:read"`
@@ -1802,6 +1833,7 @@ git commit -m "feat(auth): add role permissions and transactional audit helper"
 ### Task 8: Next.js app shell, login, protected dashboard
 
 **Files:**
+
 - Create/modify: `apps/web/next.config.ts`, `apps/web/package.json`
 - Create: `apps/web/src/app/layout.tsx`, `apps/web/src/app/page.tsx`
 - Create: `apps/web/src/app/login/page.tsx`, `apps/web/src/app/login/actions.ts`
@@ -1811,6 +1843,7 @@ git commit -m "feat(auth): add role permissions and transactional audit helper"
 - Create: `apps/web/src/middleware.ts`
 
 **Interfaces:**
+
 - Consumes: `validateSessionToken`, `createSession`, `invalidateSession`, `SessionUser` (Task 6); `hashPassword`, `verifyPassword`, `parseServerEnv` from `@cs/shared` (Tasks 3 and 4); `recordAudit` (Task 7); `prisma` (Task 5).
 - Produces:
   - `getCurrentUser(): Promise<SessionUser | null>`
@@ -2019,7 +2052,10 @@ export default function LoginPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
-      <form action={formAction} className="w-full max-w-sm space-y-4 rounded-lg bg-white p-6 shadow">
+      <form
+        action={formAction}
+        className="w-full max-w-sm space-y-4 rounded-lg bg-white p-6 shadow"
+      >
         <div>
           <h1 className="text-lg font-semibold text-slate-900">CS Automation</h1>
           <p className="text-sm text-slate-500">Sign in with your work account.</p>
@@ -2181,6 +2217,7 @@ npm run dev --workspace @cs/web
 ```
 
 Check each of these:
+
 - Visiting `/dashboard` while signed out redirects to `/login`.
 - Submitting a wrong password shows "Those credentials are not valid." and the layout does not shift.
 - Submitting correct credentials lands on `/dashboard` showing the display name and Lead role.
@@ -2201,9 +2238,11 @@ git commit -m "feat(web): add login, protected layout, and dashboard shell"
 ### Task 9: Continuous integration
 
 **Files:**
+
 - Create: `.github/workflows/ci.yml`
 
 **Interfaces:**
+
 - Consumes: the `verify` scripts defined in Task 2 and the migrations from Task 5.
 - Produces: a required status check on pull requests into `develop` and `main`.
 
@@ -2290,10 +2329,12 @@ In GitHub repository settings, require the `verify` check to pass before merging
 ### Task 10: SMB copy-strategy benchmark spike
 
 **Files:**
+
 - Create: `scripts/spike-copy-benchmark.ps1`
 - Create: `docs/benchmarks/2026-07-26-smb-copy-strategy.md`
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks; it is a standalone measurement.
 - Produces: a documented decision on whether the File Agent should use `Copy-Item` or `robocopy` for the backup-to-production step, which Phase 2 depends on.
 
@@ -2397,6 +2438,7 @@ git commit -m "spike: benchmark SMB copy strategy for backup to production trans
 ### Task 11: Final verification and Phase 0 sign-off
 
 **Files:**
+
 - Modify: `docs/implementation-status.md`, `docs/unresolved-questions.md`, `README.md`
 
 - [ ] **Step 1: Run the full verification from a clean install**

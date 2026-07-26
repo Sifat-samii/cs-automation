@@ -1,0 +1,39 @@
+{
+  "name": "cs-automation",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "run-s typecheck:packages typecheck:web",
+    "typecheck:packages": "tsc --build --force",
+    "typecheck:web": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "npm run build --workspaces --if-present",
+    "db:generate": "npm run generate --workspace @cs/db",
+    "db:migrate": "npm run migrate --workspace @cs/db",
+    "db:migrate:deploy": "npm run migrate:deploy --workspace @cs/db",
+    "db:seed": "npm run seed --workspace @cs/db",
+    "verify": "run-s typecheck lint format:check test build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.1",
+    "dotenv": "^17.4.2",
+    "eslint": "^10.8.0",
+    "npm-run-all2": "^9.0.2",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
+  }
+}

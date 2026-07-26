@@ -4,12 +4,12 @@
 
 Everything for the MVP runs on one on-prem Windows box (`TUDB01`):
 
-| Process | Role |
-|---------|------|
-| Next.js app (`apps/web`) | CS UI, APIs, approvals, job enqueue |
-| PostgreSQL 18 | Source of truth |
-| n8n (npm, Windows service) | Gmail poll/send, later Sheets mirror |
-| Ollama | Local advisory extraction only |
+| Process                        | Role                                     |
+| ------------------------------ | ---------------------------------------- |
+| Next.js app (`apps/web`)       | CS UI, APIs, approvals, job enqueue      |
+| PostgreSQL 18                  | Source of truth                          |
+| n8n (npm, Windows service)     | Gmail poll/send, later Sheets mirror     |
+| Ollama                         | Local advisory extraction only           |
 | File Agent (`apps/file-agent`) | Downloads, staging, UNC writes — Phase 2 |
 
 No Docker in Phase 0 (Docker is not installed on the box).

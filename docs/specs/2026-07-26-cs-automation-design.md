@@ -139,14 +139,14 @@ Inbox of unhandled emails, each with a pre-filled proposed action and visible ev
 
 ## Phased roadmap
 
-| Phase | Branch | Delivers |
-|-------|--------|----------|
-| 0 | `feature/project-foundation` | Repo, auth, audit, CI, copy benchmark |
-| 1 | `feature/manual-order-intake` | Client registry, Order/Batch, path builder, manual create |
-| 2 | `feature/file-agent` | Job queue, UNC transfers, Windows service |
-| 3 | `feature/gmail-integration` | n8n Gmail poll, review inbox, approved emails |
-| 4 | `feature/ai-assistance` | Local Ollama assist behind extractor interface |
-| 5 | `feature/google-sheets-sync` | One-way Postgres → Sheets mirror |
+| Phase | Branch                        | Delivers                                                  |
+| ----- | ----------------------------- | --------------------------------------------------------- |
+| 0     | `feature/project-foundation`  | Repo, auth, audit, CI, copy benchmark                     |
+| 1     | `feature/manual-order-intake` | Client registry, Order/Batch, path builder, manual create |
+| 2     | `feature/file-agent`          | Job queue, UNC transfers, Windows service                 |
+| 3     | `feature/gmail-integration`   | n8n Gmail poll, review inbox, approved emails             |
+| 4     | `feature/ai-assistance`       | Local Ollama assist behind extractor interface            |
+| 5     | `feature/google-sheets-sync`  | One-way Postgres → Sheets mirror                          |
 
 ## Open risks
 
