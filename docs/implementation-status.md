@@ -192,6 +192,7 @@ Windows service and shared-mailbox Gmail OAuth is not evidenced. Drafts that sti
 
 - Branch: `feature/google-sheets-sync`.
 - Seeded `folderName` equals `code` until CS rebinds folders on the shares.
+- **Client registration UX:** new clients no longer pick an unbound folder. `folderName` is derived from the display name; backup and production share folders are created at registration when missing. The clients table shows folder name + backup path with copy, and a row-click popup lists orders (no Remarks column).
 - Sheets is one-way from Postgres; Status/QC columns remain human-owned on the sheet.
 
 Last updated: 2026-07-26

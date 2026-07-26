@@ -1,6 +1,6 @@
-import { readdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import type { DbClient, PrismaClient } from "@cs/db";
-import { joinUncPath } from "@cs/shared";
+import { joinUncPath, sanitisePathSegment, toExtendedLengthPath } from "@cs/shared";
 import { recordAudit } from "@/lib/audit";
 
 export type ClientIdentityInput = {
@@ -13,13 +13,18 @@ export type ClientMutationActor = {
   label: string;
 };
 
+export type EnsureDirectory = (path: string) => Promise<void>;
+
 export type CreateClientInput = {
   code: string;
   displayName: string;
-  folderName: string;
+  folderName?: string;
+  backupRoot: string;
+  productionRoot: string;
   identities?: readonly ClientIdentityInput[];
   actor: ClientMutationActor;
   correlationId: string;
+  ensureDirectory?: EnsureDirectory;
 };
 
 export type DirectoryEntry = {
@@ -71,11 +76,62 @@ function validateFolderName(folderName: string): string {
   return trimmed;
 }
 
+/**
+ * Prefer the display name as a single share segment; sanitise or fall back to code when invalid.
+ */
+export function deriveClientFolderName(displayName: string, code: string): string {
+  const normalisedCode = normaliseClientCode(code);
+  const trimmedName = displayName.trim();
+  try {
+    return validateFolderName(trimmedName);
+  } catch {
+    try {
+      return validateFolderName(sanitisePathSegment(trimmedName));
+    } catch {
+      return normalisedCode;
+    }
+  }
+}
+
+async function defaultEnsureDirectory(path: string): Promise<void> {
+  await mkdir(path, { recursive: true });
+}
+
+export async function ensureClientShareFolders(
+  input: {
+    backupRoot: string;
+    productionRoot: string;
+    folderName: string;
+  },
+  ensureDirectory: EnsureDirectory = defaultEnsureDirectory,
+): Promise<void> {
+  const folderName = validateFolderName(input.folderName);
+  const backupPath = toExtendedLengthPath(joinUncPath(input.backupRoot, folderName));
+  const productionPath = toExtendedLengthPath(joinUncPath(input.productionRoot, folderName));
+  await ensureDirectory(backupPath);
+  await ensureDirectory(productionPath);
+}
+
 export async function createClient(db: PrismaClient, input: CreateClientInput) {
   const code = normaliseClientCode(input.code);
   const displayName = requiredTrimmed(input.displayName, "Client display name");
-  const folderName = validateFolderName(input.folderName);
+  const folderName = validateFolderName(
+    input.folderName && input.folderName.trim().length > 0
+      ? input.folderName
+      : deriveClientFolderName(displayName, code),
+  );
   const identities = (input.identities ?? []).map(normaliseIdentity);
+  const ensureDirectory = input.ensureDirectory ?? defaultEnsureDirectory;
+
+  // Fail closed: create share folders before the DB row so a mkdir failure does not orphan a client.
+  await ensureClientShareFolders(
+    {
+      backupRoot: input.backupRoot,
+      productionRoot: input.productionRoot,
+      folderName,
+    },
+    ensureDirectory,
+  );
 
   return db.$transaction(async (transaction) => {
     const client = await transaction.client.create({

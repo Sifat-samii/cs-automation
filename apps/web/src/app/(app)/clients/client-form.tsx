@@ -6,9 +6,8 @@ import { SubmitButton } from "@/app/(app)/_components/submit-button";
 
 const initialState: ClientActionState = { error: null };
 
-export function ClientForm({ folders }: { folders: readonly string[] }) {
+export function ClientForm() {
   const [state, formAction] = useActionState(createClientAction, initialState);
-  const hasFolders = folders.length > 0;
 
   return (
     <form
@@ -38,34 +37,11 @@ export function ClientForm({ folders }: { folders: readonly string[] }) {
             placeholder="Verily"
             className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-slate-600"
           />
+          <span className="block text-xs font-normal text-slate-500">
+            Share folders are created automatically from this name on backup and production.
+          </span>
         </label>
       </div>
-
-      <label className="block space-y-2 text-sm font-medium text-slate-700">
-        Existing backup folder
-        <select
-          name="folderName"
-          required
-          disabled={!hasFolders}
-          defaultValue=""
-          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 outline-none focus:border-slate-600 disabled:bg-slate-100"
-        >
-          <option value="" disabled>
-            {hasFolders ? "Choose an unbound folder" : "No unbound folders found"}
-          </option>
-          {folders.map((folder) => (
-            <option key={folder} value={folder}>
-              {folder}
-            </option>
-          ))}
-        </select>
-        {!hasFolders && (
-          <span className="block text-xs font-normal text-amber-700">
-            Create or confirm the client folder under the approved backup root, then reload this
-            page.
-          </span>
-        )}
-      </label>
 
       <fieldset className="space-y-4 rounded-lg border border-slate-200 p-4">
         <legend className="px-1 text-sm font-semibold text-slate-800">Sender matching</legend>
@@ -90,15 +66,11 @@ export function ClientForm({ folders }: { folders: readonly string[] }) {
         </label>
       </fieldset>
 
-      <p role="alert" aria-live="polite" className="min-h-5 text-sm text-red-700">
-        {state.error ?? ""}
-      </p>
-      <div className="flex justify-end">
-        <SubmitButton
-          label="Create client"
-          pendingLabel="Creating client..."
-          disabled={!hasFolders}
-        />
+      <div className="flex flex-wrap items-center gap-3">
+        <SubmitButton label="Register client" pendingLabel="Registering..." />
+        <p role="alert" aria-live="polite" className="min-h-5 text-sm text-red-700">
+          {state.error ?? ""}
+        </p>
       </div>
     </form>
   );

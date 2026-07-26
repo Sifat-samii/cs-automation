@@ -56,8 +56,8 @@ export function AddClientModal({
                   Add new client
                 </h3>
                 <p className="mt-1 text-sm text-slate-600">
-                  Registers the sender so this email can be approved. Folder defaults to the client
-                  code until rebound on the shares.
+                  Registers the sender and creates their share folder from the display name when
+                  needed.
                 </p>
               </div>
               <button
@@ -89,15 +89,6 @@ export function AddClientModal({
                   key={suggestedCode}
                   pattern="[A-Za-z0-9]{2,12}"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono uppercase"
-                />
-              </label>
-              <label className="block space-y-1 text-sm font-medium text-slate-700">
-                Folder name
-                <input
-                  name="folderName"
-                  defaultValue={suggestedCode}
-                  key={`folder-${suggestedCode}`}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2"
                 />
               </label>
               <label className="block space-y-1 text-sm font-medium text-slate-700">

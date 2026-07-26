@@ -5,7 +5,7 @@ import { prisma } from "@cs/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { deriveClientCode } from "@cs/shared";
+import { deriveClientCode, parseServerEnv } from "@cs/shared";
 import { requireUser } from "@/lib/auth/current-user";
 import { assertCan } from "@/lib/auth/rbac";
 import { createClient } from "@/lib/clients/service";
@@ -140,7 +140,6 @@ const inboxClientSchema = z.object({
     .regex(/^[A-Za-z0-9]{2,12}$/u)
     .optional()
     .or(z.literal("")),
-  folderName: z.string().trim().max(255).optional().or(z.literal("")),
   address: z.string().trim().max(320).optional().or(z.literal("")),
 });
 
@@ -152,12 +151,12 @@ export async function createClientFromInboxAction(
 ): Promise<InboxClientActionState> {
   const user = await requireUser();
   assertCan(user.role, "client:manage");
+  const env = parseServerEnv(process.env);
 
   const parsed = inboxClientSchema.safeParse({
     emailMessageId: formData.get("emailMessageId"),
     displayName: formData.get("displayName"),
     code: formData.get("code") ?? "",
-    folderName: formData.get("folderName") ?? "",
     address: formData.get("address") ?? "",
   });
   if (!parsed.success) {
@@ -168,8 +167,6 @@ export async function createClientFromInboxAction(
     parsed.data.code && parsed.data.code.length > 0
       ? parsed.data.code.toUpperCase()
       : deriveClientCode(parsed.data.displayName);
-  const folderName =
-    parsed.data.folderName && parsed.data.folderName.length > 0 ? parsed.data.folderName : code;
   const address =
     parsed.data.address && parsed.data.address.length > 0 ? parsed.data.address : undefined;
 
@@ -178,14 +175,16 @@ export async function createClientFromInboxAction(
     client = await createClient(prisma, {
       code,
       displayName: parsed.data.displayName,
-      folderName,
       identities: address ? [{ kind: "ADDRESS", value: address }] : [],
+      backupRoot: env.BACKUP_ROOT_UNC,
+      productionRoot: env.PRODUCTION_ROOT_UNC,
       actor: { userId: user.userId, label: user.displayName },
       correlationId: randomUUID(),
     });
   } catch {
     return {
-      error: "The client could not be created. Check for an existing code, folder, or identity.",
+      error:
+        "The client could not be created. Check for an existing code or identity, and share folder access.",
     };
   }
 

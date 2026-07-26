@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { prisma } from "@cs/db";
+import { parseServerEnv } from "@cs/shared";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -15,7 +16,6 @@ const clientFormSchema = z.object({
     .trim()
     .regex(/^[A-Za-z0-9]{2,12}$/u),
   displayName: z.string().trim().min(1).max(200),
-  folderName: z.string().trim().min(1).max(255),
   address: z.string().trim().max(320),
   domain: z.string().trim().max(253),
 });
@@ -28,11 +28,11 @@ export async function createClientAction(
 ): Promise<ClientActionState> {
   const user = await requireUser();
   assertCan(user.role, "client:manage");
+  const env = parseServerEnv(process.env);
 
   const parsed = clientFormSchema.safeParse({
     code: formData.get("code"),
     displayName: formData.get("displayName"),
-    folderName: formData.get("folderName"),
     address: formData.get("address") ?? "",
     domain: formData.get("domain") ?? "",
   });
@@ -49,8 +49,9 @@ export async function createClientAction(
     await createClient(prisma, {
       code: parsed.data.code,
       displayName: parsed.data.displayName,
-      folderName: parsed.data.folderName,
       identities,
+      backupRoot: env.BACKUP_ROOT_UNC,
+      productionRoot: env.PRODUCTION_ROOT_UNC,
       actor: {
         userId: user.userId,
         label: user.displayName,
@@ -59,7 +60,8 @@ export async function createClientAction(
     });
   } catch {
     return {
-      error: "The client could not be created. Check for an existing code, folder, or identity.",
+      error:
+        "The client could not be created. Check for an existing code or identity, and share folder access.",
     };
   }
 

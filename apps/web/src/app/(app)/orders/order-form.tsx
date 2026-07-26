@@ -1,7 +1,6 @@
 "use client";
 
-import { buildOrderFolderName } from "@cs/shared/paths";
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useState } from "react";
 import { createOrderAction, type OrderActionState } from "@/app/(app)/orders/actions";
 import { SubmitButton } from "@/app/(app)/_components/submit-button";
 
@@ -13,22 +12,9 @@ type ClientOption = {
   displayName: string;
 };
 
-export function OrderForm({
-  clients,
-  utcDateCode,
-}: {
-  clients: readonly ClientOption[];
-  utcDateCode: string;
-}) {
+export function OrderForm({ clients }: { clients: readonly ClientOption[] }) {
   const [state, formAction] = useActionState(createOrderAction, initialState);
   const [clientId, setClientId] = useState(clients[0]?.id ?? "");
-  const [title, setTitle] = useState("");
-  const selectedClient = clients.find((client) => client.id === clientId);
-  const preview = useMemo(() => {
-    if (!selectedClient) return "Choose a client to preview the folder.";
-    const code = `${selectedClient.code}_${utcDateCode}_001`;
-    return buildOrderFolderName(code, title || "untitled");
-  }, [selectedClient, title, utcDateCode]);
 
   return (
     <form
@@ -64,8 +50,6 @@ export function OrderForm({
             name="title"
             required
             maxLength={500}
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
             placeholder="Kirkland Spring Drop"
             className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-slate-600"
           />
@@ -92,18 +76,6 @@ export function OrderForm({
           className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-slate-600"
         />
       </label>
-
-      <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
-          Folder preview
-        </p>
-        <code className="mt-2 block break-all text-sm font-semibold text-indigo-950">
-          {preview}
-        </code>
-        <p className="mt-2 text-xs text-indigo-700">
-          The sequence is confirmed when the order is saved.
-        </p>
-      </div>
 
       <fieldset className="space-y-4 rounded-lg border border-slate-200 p-4">
         <legend className="px-1 text-sm font-semibold text-slate-800">Initial source</legend>

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     throw new Error(`redirect:${path}`);
   }),
   revalidatePath: vi.fn(),
+  createClient: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/current-user", () => ({
@@ -20,6 +21,13 @@ vi.mock("next/navigation", () => ({
 vi.mock("next/cache", () => ({
   revalidatePath: mocks.revalidatePath,
 }));
+vi.mock("@/lib/clients/service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/clients/service")>();
+  return {
+    ...actual,
+    createClient: mocks.createClient,
+  };
+});
 
 import {
   createClientFromInboxAction,
@@ -40,7 +48,6 @@ function inboxClientForm(overrides: Record<string, string> = {}): FormData {
   formData.set("emailMessageId", emailMessageId);
   formData.set("displayName", "Inbox Pilot Client");
   formData.set("code", "");
-  formData.set("folderName", "");
   formData.set("address", "orders@pilot.example");
   for (const [key, value] of Object.entries(overrides)) {
     formData.set(key, value);
@@ -62,6 +69,23 @@ describe("createClientFromInboxAction", () => {
     });
     vi.clearAllMocks();
     mocks.requireUser.mockResolvedValue(actor);
+    mocks.createClient.mockImplementation(async (_db, input) => {
+      return prisma.client.create({
+        data: {
+          code: String(input.code).toUpperCase(),
+          displayName: input.displayName,
+          folderName: input.displayName,
+          identities: {
+            create: (input.identities ?? []).map(
+              (identity: { kind: "ADDRESS" | "DOMAIN"; value: string }) => ({
+                kind: identity.kind,
+                value: identity.value.toLowerCase(),
+              }),
+            ),
+          },
+        },
+      });
+    });
   });
 
   afterAll(async () => {
@@ -91,11 +115,20 @@ describe("createClientFromInboxAction", () => {
     });
     expect(client).toMatchObject({
       code: "INBOXPILOTCL",
-      folderName: "INBOXPILOTCL",
+      folderName: "Inbox Pilot Client",
     });
     expect(client?.identities).toEqual([
       expect.objectContaining({ kind: "ADDRESS", value: "orders@pilot.example" }),
     ]);
+    expect(mocks.createClient).toHaveBeenCalledTimes(1);
+    const createArgs = mocks.createClient.mock.calls[0]?.[1] as {
+      displayName: string;
+      backupRoot: string;
+      productionRoot: string;
+    };
+    expect(createArgs.displayName).toBe("Inbox Pilot Client");
+    expect(createArgs.backupRoot.length).toBeGreaterThan(0);
+    expect(createArgs.productionRoot.length).toBeGreaterThan(0);
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/clients");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/inbox");
     expect(mocks.revalidatePath).toHaveBeenCalledWith(`/inbox/${emailMessageId}`);

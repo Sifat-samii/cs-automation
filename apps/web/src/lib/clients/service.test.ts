@@ -1,8 +1,10 @@
 import { prisma } from "@cs/db";
 import { resetDatabase } from "@cs/db/testing";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { parseServerEnv } from "@cs/shared";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createClient,
+  deriveClientFolderName,
   listUnboundFolders,
   resolveClientByEmail,
   type DirectoryEntry,
@@ -13,6 +15,7 @@ const actor = {
   label: "Sifat Sami",
 };
 const correlationId = "22222222-2222-4222-8222-222222222222";
+const env = parseServerEnv(process.env);
 
 async function createActor(): Promise<void> {
   await prisma.user.create({
@@ -28,18 +31,33 @@ async function createActor(): Promise<void> {
 
 async function registerClient(
   code: string,
-  folderName: string,
+  displayName: string,
   identities: readonly { kind: "ADDRESS" | "DOMAIN"; value: string }[],
+  folderName?: string,
 ) {
+  const ensureDirectory = vi.fn(async () => undefined);
   return createClient(prisma, {
     code,
-    displayName: `${code} Client`,
-    folderName,
+    displayName,
+    ...(folderName ? { folderName } : {}),
     identities,
+    backupRoot: env.BACKUP_ROOT_UNC,
+    productionRoot: env.PRODUCTION_ROOT_UNC,
     actor,
     correlationId,
+    ensureDirectory,
   });
 }
+
+describe("deriveClientFolderName", () => {
+  it("uses the display name when it is a valid folder segment", () => {
+    expect(deriveClientFolderName("Proper Cloth", "PC")).toBe("Proper Cloth");
+  });
+
+  it("falls back to code when the display name cannot form a folder", () => {
+    expect(deriveClientFolderName("..", "VRLY")).toBe("VRLY");
+  });
+});
 
 describe("client registry service", () => {
   beforeEach(async () => {
@@ -103,8 +121,26 @@ describe("client registry service", () => {
     });
   });
 
+  it("derives folderName from displayName and ensures share folders before insert", async () => {
+    const ensureDirectory = vi.fn(async (_path: string) => undefined);
+    const client = await createClient(prisma, {
+      code: "FN",
+      displayName: "FN Studio",
+      identities: [],
+      backupRoot: env.BACKUP_ROOT_UNC,
+      productionRoot: env.PRODUCTION_ROOT_UNC,
+      actor,
+      correlationId,
+      ensureDirectory,
+    });
+    expect(client.folderName).toBe("FN Studio");
+    expect(ensureDirectory).toHaveBeenCalledTimes(2);
+    expect(String(ensureDirectory.mock.calls[0]?.[0])).toContain("FN Studio");
+    expect(String(ensureDirectory.mock.calls[1]?.[0])).toContain("FN Studio");
+  });
+
   it("lists only unbound directories and excludes _Final Done and files", async () => {
-    await registerClient("BOUND", "Bound Client", []);
+    await registerClient("BOUND", "Bound Client", [], "Bound Client");
     const entries: readonly DirectoryEntry[] = [
       { name: "_Final Done", isDirectory: () => true },
       { name: "Bound Client", isDirectory: () => true },

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     throw new Error(`redirect:${path}`);
   }),
   revalidatePath: vi.fn(),
+  createClient: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/current-user", () => ({
@@ -20,6 +21,13 @@ vi.mock("next/navigation", () => ({
 vi.mock("next/cache", () => ({
   revalidatePath: mocks.revalidatePath,
 }));
+vi.mock("@/lib/clients/service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/clients/service")>();
+  return {
+    ...actual,
+    createClient: mocks.createClient,
+  };
+});
 
 import { createClientAction, type ClientActionState } from "@/app/(app)/clients/actions";
 
@@ -35,7 +43,6 @@ function clientForm(): FormData {
   const formData = new FormData();
   formData.set("code", "VRLY");
   formData.set("displayName", "Verily");
-  formData.set("folderName", "Verily");
   formData.set("address", "orders@example.com");
   formData.set("domain", "example.com");
   return formData;
@@ -55,6 +62,25 @@ describe("client actions", () => {
     });
     vi.clearAllMocks();
     mocks.requireUser.mockResolvedValue(actor);
+    mocks.createClient.mockImplementation(async (_db, input) => {
+      return prisma.client.create({
+        data: {
+          code: String(input.code).toUpperCase(),
+          displayName: input.displayName,
+          folderName: input.displayName,
+          identities: {
+            create: [
+              ...(input.identities ?? []).map(
+                (identity: { kind: "ADDRESS" | "DOMAIN"; value: string }) => ({
+                  kind: identity.kind,
+                  value: identity.value.toLowerCase(),
+                }),
+              ),
+            ],
+          },
+        },
+      });
+    });
   });
 
   afterAll(async () => {
@@ -68,21 +94,32 @@ describe("client actions", () => {
     });
 
     await expect(createClientAction(initialState, clientForm())).rejects.toThrow(ForbiddenError);
+    expect(mocks.createClient).not.toHaveBeenCalled();
     await expect(prisma.client.count()).resolves.toBe(0);
   });
 
-  it("creates and audits a client, then revalidates and redirects", async () => {
+  it("creates a client without a folder form field, then revalidates and redirects", async () => {
     await expect(createClientAction(initialState, clientForm())).rejects.toThrow(
       "redirect:/clients",
     );
 
+    expect(mocks.createClient).toHaveBeenCalledTimes(1);
+    const createArgs = mocks.createClient.mock.calls[0]?.[1] as {
+      code: string;
+      displayName: string;
+      folderName?: string;
+      backupRoot: string;
+      productionRoot: string;
+    };
+    expect(createArgs.code).toBe("VRLY");
+    expect(createArgs.displayName).toBe("Verily");
+    expect(createArgs.folderName).toBeUndefined();
+    expect(createArgs.backupRoot.length).toBeGreaterThan(0);
+    expect(createArgs.productionRoot.length).toBeGreaterThan(0);
     await expect(prisma.client.findUnique({ where: { code: "VRLY" } })).resolves.toMatchObject({
       displayName: "Verily",
       folderName: "Verily",
     });
-    await expect(
-      prisma.auditEvent.findFirst({ where: { action: "client.created" } }),
-    ).resolves.toMatchObject({ actorUserId: actor.userId });
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/clients");
     expect(mocks.redirect).toHaveBeenCalledWith("/clients");
   });

@@ -4,14 +4,6 @@ import { OrderForm } from "@/app/(app)/orders/order-form";
 import { requireUser } from "@/lib/auth/current-user";
 import { assertCan } from "@/lib/auth/rbac";
 
-function utcDateCode(date: Date): string {
-  return [
-    date.getUTCFullYear().toString().slice(-2),
-    (date.getUTCMonth() + 1).toString().padStart(2, "0"),
-    date.getUTCDate().toString().padStart(2, "0"),
-  ].join("");
-}
-
 export default async function NewOrderPage() {
   const user = await requireUser();
   assertCan(user.role, "order:write");
@@ -41,7 +33,7 @@ export default async function NewOrderPage() {
           order.
         </div>
       )}
-      <OrderForm clients={clients} utcDateCode={utcDateCode(new Date())} />
+      <OrderForm clients={clients} />
     </div>
   );
 }
