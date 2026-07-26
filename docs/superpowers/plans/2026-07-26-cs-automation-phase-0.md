@@ -344,11 +344,14 @@ uses the non-composite tsconfig that Next.js generates and cannot participate in
 ```json
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "rootDir": "./src", "outDir": "./dist" },
+  "compilerOptions": { "rootDir": "./src", "outDir": "./dist", "types": ["node"] },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]
 }
 ```
+
+TypeScript 6 no longer auto-includes the installed Node declarations for this composite workspace
+in this environment, so `types: ["node"]` is explicit. This does not change strictness.
 
 - [ ] **Step 6: Create `.prettierrc.json` and `eslint.config.mjs`**
 

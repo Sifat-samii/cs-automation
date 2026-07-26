@@ -15,6 +15,7 @@
     "build": "tsc --build"
   },
   "dependencies": {
+    "@node-rs/argon2": "^2.0.2",
     "zod": "^4.4.3"
   }
 }
