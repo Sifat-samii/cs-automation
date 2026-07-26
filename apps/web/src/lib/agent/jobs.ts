@@ -115,6 +115,48 @@ export async function heartbeat(
   return db.transferJob.findUniqueOrThrow({ where: { id: input.jobId } });
 }
 
+export async function updateJobProgress(
+  db: PrismaClient,
+  input: OwnedJobInput & {
+    bytesDone: number;
+    bytesTotal: number;
+    leaseDurationMs?: number;
+  },
+): Promise<TransferJob> {
+  const owner = requireLeaseOwner(input.leaseOwner);
+  const now = validDate(input.now ?? new Date(), "Progress time");
+  const expiresAt = leaseExpiry(now, input.leaseDurationMs ?? DEFAULT_LEASE_DURATION_MS);
+  if (
+    !Number.isSafeInteger(input.bytesDone) ||
+    !Number.isSafeInteger(input.bytesTotal) ||
+    input.bytesDone < 0 ||
+    input.bytesTotal < 0 ||
+    input.bytesDone > input.bytesTotal
+  ) {
+    throw new Error(
+      "Progress bytes must be safe non-negative integers with done no greater than total",
+    );
+  }
+
+  const updated = await db.transferJob.updateMany({
+    where: {
+      id: input.jobId,
+      status: "LEASED",
+      leaseOwner: owner,
+      leaseExpiresAt: { gt: now },
+    },
+    data: {
+      bytesDone: BigInt(input.bytesDone),
+      bytesTotal: BigInt(input.bytesTotal),
+      leaseExpiresAt: expiresAt,
+    },
+  });
+  if (updated.count !== 1) {
+    throw new JobLeaseError("Job lease is missing, expired, or owned by another agent");
+  }
+  return db.transferJob.findUniqueOrThrow({ where: { id: input.jobId } });
+}
+
 export async function completeJob(db: PrismaClient, input: OwnedJobInput): Promise<TransferJob> {
   const owner = requireLeaseOwner(input.leaseOwner);
   const now = validDate(input.now ?? new Date(), "Completion time");
