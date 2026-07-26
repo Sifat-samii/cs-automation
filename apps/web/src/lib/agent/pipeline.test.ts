@@ -12,6 +12,15 @@ const actorUserId = "11111111-1111-4111-8111-111111111111";
 const correlationId = "22222222-2222-4222-8222-222222222222";
 
 async function createBatch(): Promise<string> {
+  await prisma.user.create({
+    data: {
+      id: actorUserId,
+      loginId: "2061",
+      displayName: "Sifat Sami",
+      passwordHash: "test-only-password-hash",
+      role: "CS_LEAD",
+    },
+  });
   const client = await prisma.client.create({
     data: { code: "VRLY", displayName: "Verily", folderName: "Verily" },
   });
@@ -110,6 +119,7 @@ describe("transfer pipeline orchestration", () => {
       await completePipelineJob(prisma, {
         jobId: leased.id,
         leaseOwner: "agent-1",
+        attempt: leased.attempts,
         artifacts: stage.artifacts as readonly PipelineArtifactInput[],
       });
       await expect(
@@ -124,9 +134,26 @@ describe("transfer pipeline orchestration", () => {
     await expect(prisma.fileArtifact.count({ where: { batchId } })).resolves.toBe(3);
     await expect(
       prisma.orderEvent.count({ where: { batchId, type: { startsWith: "transfer." } } }),
-    ).resolves.toBe(5);
+    ).resolves.toBe(6);
     await expect(
       prisma.auditEvent.count({ where: { correlationId, actorLabel: "File Agent" } }),
-    ).resolves.toBe(5);
+    ).resolves.toBe(6);
+  });
+
+  it("marks a batch as downloading when the download job is leased", async () => {
+    const batchId = await createBatch();
+    await queueBatchTransfer(prisma, { batchId, correlationId });
+
+    const leased = await leaseNextJob(prisma, { leaseOwner: "agent-1" });
+
+    expect(leased).toMatchObject({ kind: "DOWNLOAD", attempts: 1 });
+    await expect(
+      prisma.orderBatch.findUniqueOrThrow({ where: { id: batchId } }),
+    ).resolves.toMatchObject({ status: "DOWNLOADING" });
+    await expect(
+      prisma.orderEvent.count({
+        where: { batchId, type: "transfer.download.started" },
+      }),
+    ).resolves.toBe(1);
   });
 });

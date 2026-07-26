@@ -9,13 +9,21 @@ export interface AgentLogger {
 
 export interface AgentApiPort {
   lease(): Promise<AgentJob | null>;
-  progress(jobId: string, bytesDone: number, bytesTotal: number): Promise<void>;
-  complete(jobId: string, artifacts: readonly AgentArtifact[]): Promise<void>;
-  fail(jobId: string, errorClass: "TRANSIENT" | "PERMANENT", error: string): Promise<void>;
+  progress(jobId: string, attempt: number, bytesDone: number, bytesTotal: number): Promise<void>;
+  complete(jobId: string, attempt: number, artifacts: readonly AgentArtifact[]): Promise<void>;
+  fail(
+    jobId: string,
+    attempt: number,
+    errorClass: "TRANSIENT" | "PERMANENT",
+    error: string,
+  ): Promise<void>;
 }
 
 export interface JobExecutorPort {
-  execute(job: AgentJob): Promise<ExecutionResult>;
+  execute(
+    job: AgentJob,
+    onProgress?: (bytesDone: number, bytesTotal: number) => Promise<void>,
+  ): Promise<ExecutionResult>;
 }
 
 export class JsonLineAgentLogger implements AgentLogger {
@@ -63,14 +71,19 @@ export class FileAgent {
     this.heartbeatMilliseconds = input.heartbeatMilliseconds;
   }
 
-  private heartbeat(job: AgentJob): ReturnType<typeof setInterval> {
+  private heartbeat(
+    job: AgentJob,
+    progress: { bytesDone: number; bytesTotal: number },
+  ): ReturnType<typeof setInterval> {
     return setInterval(() => {
-      void this.api.progress(job.id, job.bytesDone, job.bytesTotal).catch(() =>
-        this.logger.error("agent.heartbeat_failed", {
-          jobId: job.id,
-          jobKind: job.kind,
-        }),
-      );
+      void this.api
+        .progress(job.id, job.attempts, progress.bytesDone, progress.bytesTotal)
+        .catch(() =>
+          this.logger.error("agent.heartbeat_failed", {
+            jobId: job.id,
+            jobKind: job.kind,
+          }),
+        );
     }, this.heartbeatMilliseconds);
   }
 
@@ -83,12 +96,18 @@ export class FileAgent {
       attempt: job.attempts,
     });
 
-    const heartbeat = this.heartbeat(job);
+    const progress = { bytesDone: job.bytesDone, bytesTotal: job.bytesTotal };
+    const reportProgress = async (bytesDone: number, bytesTotal: number): Promise<void> => {
+      progress.bytesDone = bytesDone;
+      progress.bytesTotal = bytesTotal;
+      await this.api.progress(job.id, job.attempts, bytesDone, bytesTotal);
+    };
+    const heartbeat = this.heartbeat(job, progress);
     try {
-      const result = await this.executor.execute(job);
-      await this.api.progress(job.id, result.bytesTotal, result.bytesTotal);
+      const result = await this.executor.execute(job, reportProgress);
+      await reportProgress(result.bytesTotal, result.bytesTotal);
       clearInterval(heartbeat);
-      await this.api.complete(job.id, result.artifacts);
+      await this.api.complete(job.id, job.attempts, result.artifacts);
       this.logger.info("agent.job_completed", {
         jobId: job.id,
         jobKind: job.kind,
@@ -98,7 +117,7 @@ export class FileAgent {
       clearInterval(heartbeat);
       const failureClass = error instanceof TransferFailure ? error.errorClass : "TRANSIENT";
       const message = error instanceof Error ? error.message : "Unknown transfer failure";
-      await this.api.fail(job.id, failureClass, message);
+      await this.api.fail(job.id, job.attempts, failureClass, message);
       this.logger.error("agent.job_failed", {
         jobId: job.id,
         jobKind: job.kind,

@@ -6,6 +6,7 @@ import { completePipelineJob } from "@/lib/agent/pipeline";
 
 const requestSchema = z.object({
   leaseOwner: z.string().trim().min(1).max(200),
+  attempt: z.number().int().positive(),
   artifacts: z
     .array(
       z.object({

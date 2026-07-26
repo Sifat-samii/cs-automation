@@ -20,11 +20,17 @@ code 16 for extended UNC arguments. The same source and destination expressed as
 - The robocopy adapter validates that both arguments are UNC paths, converts an extended UNC input
   back to normal UNC only at the robocopy process boundary, and never accepts a drive-letter path.
 - `/256` is deliberately omitted so robocopy retains its native long-path behavior.
+- Robocopy writes to the attempt-fenced
+  `<productionRoot>\.cs-file-agent-transfers\<batchId>\<attempt>-production` scratch tree, never
+  directly into a client/order tree. The scratch batch tree is swept on retry and failure.
 - Robocopy output is never trusted as verification. The agent performs size and SHA-256 manifest
-  verification through the extended-length Node filesystem port before atomic promotion.
+  verification through the extended-length Node filesystem port before an atomic same-share
+  rename promotes the batch into its final client/order path.
 
 ## Consequences
 
 Robocopy works on the actual TUDB01/SMB environment while the application's own filesystem access
 remains extended-length and UNC-only. The process-boundary exception is explicit, narrow, tested,
-and protected by post-copy checksum verification.
+and protected by post-copy checksum verification. Crash debris is kept out of client/order trees,
+and a reclaimed attempt uses its own fenced scratch path after sweeping the abandoned batch
+scratch tree.

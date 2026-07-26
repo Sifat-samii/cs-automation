@@ -18,6 +18,15 @@ describe("application proxy", () => {
     expect(response.headers.get("location")).toBeNull();
   });
 
+  it.each(["/api/ingest/email", "/api/outbound/pending"])(
+    "allows machine endpoint %s through without a browser session",
+    (path) => {
+      const response = proxy(new NextRequest(`http://localhost${path}`));
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-middleware-next")).toBe("1");
+    },
+  );
+
   it("continues to redirect protected browser routes without a session", () => {
     const response = proxy(new NextRequest("http://localhost/orders"));
 

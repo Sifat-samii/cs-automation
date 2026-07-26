@@ -62,8 +62,8 @@ describe("File Agent loop", () => {
     });
 
     await expect(agent.runOnce()).resolves.toBe(true);
-    expect(api.progress).toHaveBeenCalledWith(leased.id, 4096, 4096);
-    expect(api.complete).toHaveBeenCalledWith(leased.id, []);
+    expect(api.progress).toHaveBeenCalledWith(leased.id, leased.attempts, 4096, 4096);
+    expect(api.complete).toHaveBeenCalledWith(leased.id, leased.attempts, []);
     expect(api.fail).not.toHaveBeenCalled();
   });
 
@@ -89,7 +89,12 @@ describe("File Agent loop", () => {
     });
 
     await expect(agent.runOnce()).resolves.toBe(true);
-    expect(api.fail).toHaveBeenCalledWith(leased.id, "PERMANENT", "Operator must use manual drop");
+    expect(api.fail).toHaveBeenCalledWith(
+      leased.id,
+      leased.attempts,
+      "PERMANENT",
+      "Operator must use manual drop",
+    );
     expect(api.complete).not.toHaveBeenCalled();
   });
 
@@ -113,5 +118,33 @@ describe("File Agent loop", () => {
 
     await expect(agent.runOnce()).resolves.toBe(false);
     expect(executor.execute).not.toHaveBeenCalled();
+  });
+
+  it("forwards non-zero executor progress before completion", async () => {
+    const leased = job();
+    const api: AgentApiPort = {
+      lease: vi.fn().mockResolvedValue(leased),
+      progress: vi.fn().mockResolvedValue(undefined),
+      complete: vi.fn().mockResolvedValue(undefined),
+      fail: vi.fn().mockResolvedValue(undefined),
+    };
+    const executor: JobExecutorPort = {
+      execute: vi.fn().mockImplementation(async (_job, onProgress) => {
+        await onProgress?.(1024, 4096);
+        return { artifacts: [], bytesTotal: 4096 };
+      }),
+    };
+    const agent = new FileAgent({
+      api,
+      executor,
+      logger: logger(),
+      pollMilliseconds: 500,
+      heartbeatMilliseconds: 60_000,
+    });
+
+    await agent.runOnce();
+
+    expect(api.progress).toHaveBeenNthCalledWith(1, leased.id, leased.attempts, 1024, 4096);
+    expect(api.progress).toHaveBeenLastCalledWith(leased.id, leased.attempts, 4096, 4096);
   });
 });

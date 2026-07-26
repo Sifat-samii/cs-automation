@@ -134,28 +134,42 @@ export class AgentApiClient {
     return response.job;
   }
 
-  async progress(jobId: string, bytesDone: number, bytesTotal: number): Promise<void> {
+  async progress(
+    jobId: string,
+    attempt: number,
+    bytesDone: number,
+    bytesTotal: number,
+  ): Promise<void> {
     await this.post(
       `/api/agent/jobs/${jobId}/progress`,
-      { leaseOwner: this.leaseOwner, bytesDone, bytesTotal },
+      { leaseOwner: this.leaseOwner, attempt, bytesDone, bytesTotal },
       "progress",
       z.object({ job: z.object({ id: z.uuid() }).passthrough() }),
     );
   }
 
-  async complete(jobId: string, artifacts: readonly AgentArtifact[]): Promise<void> {
+  async complete(
+    jobId: string,
+    attempt: number,
+    artifacts: readonly AgentArtifact[],
+  ): Promise<void> {
     await this.post(
       `/api/agent/jobs/${jobId}/complete`,
-      { leaseOwner: this.leaseOwner, artifacts },
+      { leaseOwner: this.leaseOwner, attempt, artifacts },
       "complete",
       statusResponseSchema,
     );
   }
 
-  async fail(jobId: string, errorClass: "TRANSIENT" | "PERMANENT", error: string): Promise<void> {
+  async fail(
+    jobId: string,
+    attempt: number,
+    errorClass: "TRANSIENT" | "PERMANENT",
+    error: string,
+  ): Promise<void> {
     await this.post(
       `/api/agent/jobs/${jobId}/fail`,
-      { leaseOwner: this.leaseOwner, errorClass, error },
+      { leaseOwner: this.leaseOwner, attempt, errorClass, error },
       "fail",
       statusResponseSchema,
     );

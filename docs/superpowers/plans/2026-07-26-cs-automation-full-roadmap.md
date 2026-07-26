@@ -42,10 +42,13 @@ todos:
     content: "Phase 2 Tasks 2.7 to 2.9: agent process, Windows service under a share-permitted account, progress UI, end-to-end verification"
     status: completed
   - id: p3-gate
-    content: "Phase 3 entry gate: install n8n as a service, complete Gmail OAuth, obtain approved email copy"
+    content: "Phase 3 entry gate: Phase 2 on develop; n8n service; Gmail OAuth; approved email copy"
     status: pending
+  - id: p3-plan
+    content: "Phase 3 task-level plan written at docs/superpowers/plans/2026-07-26-cs-automation-phase-3.md"
+    status: completed
   - id: p3-build
-    content: "Phase 3: Gmail poll, idempotent ingest, rule-based proposals, review inbox, approval transaction, outbound approval and send"
+    content: "Phase 3: execute dedicated plan — ingest, rules, inbox, approval, outbound, n8n workflows"
     status: pending
   - id: p4-build
     content: "Phase 4: OrderExtractor interface, async Ollama extractor with schema validation, model bake-off on real emails"
@@ -73,7 +76,9 @@ isProject: false
 
 - Sections marked CONTRACT are binding across phases. Changing them requires a new ADR.
 - Phases 1 and 2 carry task-level detail sufficient to implement directly.
-- Phases 3, 4, and 5 carry task outlines plus an Entry Gate. Their task-level detail is written when the gate clears, because their inputs do not exist yet. Do not invent those inputs.
+- Phases 3, 4, and 5 carry an Entry Gate. Phase 3 task-level detail lives in
+  `docs/superpowers/plans/2026-07-26-cs-automation-phase-3.md`. Phases 4 and 5 still use outlines
+  until their gates clear. Do not invent gated inputs (email copy, sheet columns, etc.).
 - Every phase assumes the Global Constraints below without repeating them.
 
 ## Global Constraints
@@ -388,7 +393,8 @@ Run `npm run verify`. Manually create a client bound to an existing folder, crea
 # Phase 2: Windows File Agent
 
 **Branch:** `feature/file-agent`
-**Status:** complete on the feature branch. Live 2 GiB verification and killed-agent recovery
+**Status:** complete and code-review hardened on the feature branch. Live 2 GiB verification and
+killed-agent recovery
 passed under the explicitly approved interim `TUDB01\Designer-TUUO` identity. Production service
 activation remains gated on IT provisioning `.\CS_FileAgent` (or an approved domain equivalent).
 **Entry Gate:** all three must hold.
@@ -484,34 +490,22 @@ Run a real end-to-end transfer of a multi-gigabyte order inside the `_Software T
 # Phase 3: Gmail intake and outbound
 
 **Branch:** `feature/gmail-integration`
-**Entry Gate:** n8n installed as a Windows service; Gmail OAuth completed for the shared mailbox; the exact wording of the two client emails approved by whoever owns client communication. Do not invent the email copy.
+**Status:** implemented and locally verified; live n8n/OAuth/template activation remains gated.
+**Plan:** `docs/superpowers/plans/2026-07-26-cs-automation-phase-3.md`
+
+**Entry Gate:** Phase 2 merged to `develop`; n8n installed as a Windows service; Gmail OAuth completed for the shared mailbox; exact wording approved for `ACKNOWLEDGEMENT`, `FILES_VERIFIED`, and `ETA_NOTICE`. Do not invent the email copy. If any gate item fails, stop and report it.
 
 ## Deliverable
 
-New mail appears in a CS review inbox with a pre-filled proposed action and visible evidence. Approving creates or updates an order in one transaction and drafts the acknowledgement. Approved drafts are sent by n8n in the original thread.
+New mail appears in a CS review inbox with a pre-filled rule-based proposed action and visible evidence. Approving creates or updates an order in one transaction, queues the Phase 2 transfer job, and drafts the acknowledgement. Approved drafts are sent by n8n in the original thread. No AI in this phase.
 
 ## Data model added
 
-`EmailMessage` unique on `gmailMessageId`, carrying `gmailThreadId`, `direction`, `fromAddress`, `toAddresses`, `subject`, `bodyText`, `receivedAt`, `clientId`, `orderId`, `triageStatus` in `UNREVIEWED | LINKED | IGNORED`.
-
-`Proposal` carrying `emailMessageId`, `kind` in `CREATE_ORDER | ADD_BATCH | NO_ACTION | NEEDS_HUMAN`, `payload`, `confidence`, `source` in `RULE | LLM`, `status`, `decidedById`, `decidedAt`.
-
-`OutboundEmail` carrying `orderId`, `template` in `ACKNOWLEDGEMENT | FILES_VERIFIED | ETA_NOTICE`, `renderedSubject`, `renderedBody`, `status` in `DRAFT | APPROVED | SENDING | SENT | FAILED`, `approvedById`, unique `idempotencyKey`, `gmailThreadId`, `sentMessageId`.
-
-## Task outline
-
-1. n8n Gmail poll workflow, exported to `n8n/workflows/`, posting each new message to the ingest endpoint with `Idempotency-Key: <gmailMessageId>`.
-2. `POST /api/ingest/email`, HMAC verified, upserting on `gmailMessageId` and returning 200 on a duplicate without reprocessing. The idempotency test is the most important test in this phase: post the same message twice, assert exactly one `EmailMessage` and one `Proposal`.
-3. Deterministic extraction: resolve sender via `resolveClientByEmail`, correlate to an existing order by `gmailThreadId`, extract Dropbox and Drive URLs with anchored patterns, inventory attachments. No AI in this phase.
-4. Proposal generation from rules only, with an evidence payload naming which rule fired.
-5. Review inbox UI: unhandled emails, each with proposed action, evidence, and the raw message one click away. Approve, edit then approve, link to a different order, or ignore.
-6. Approval transaction: create or update order and batch, enqueue the transfer job, draft the acknowledgement, write event and audit, atomically.
-7. Outbound queue plus the n8n send workflow threading on `In-Reply-To` so replies stay in the client's thread.
-8. The conditional second message: on batch `VERIFIED`, draft `FILES_VERIFIED` including the ETA if one exists; otherwise draft without it and move the order to `AWAITING_ETA` so a separate `ETA_NOTICE` follows.
+`EmailMessage`, `Proposal`, and `OutboundEmail` only — full Prisma shapes, enums, APIs, tasks, and TDD requirements live in the dedicated Phase 3 plan.
 
 ## Phase 3 acceptance criteria
 
-- A replayed Gmail message never creates a second order.
+- A replayed Gmail message never creates a second order (and never a second Proposal).
 - No email is sent without a recorded human approval.
 - Every sent message carries the correct `gmailThreadId`.
 - An email resolving to no client reaches the inbox as `NEEDS_HUMAN` rather than being dropped.

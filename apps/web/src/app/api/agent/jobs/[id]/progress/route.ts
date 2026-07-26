@@ -5,6 +5,7 @@ import { JobLeaseError, updateJobProgress } from "@/lib/agent/jobs";
 
 const requestSchema = z.object({
   leaseOwner: z.string().trim().min(1).max(200),
+  attempt: z.number().int().positive(),
   bytesDone: z.number().int().nonnegative().safe(),
   bytesTotal: z.number().int().nonnegative().safe(),
 });

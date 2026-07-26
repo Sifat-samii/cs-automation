@@ -24,6 +24,7 @@ describe("backup and production publication", () => {
     publisher = new TransferPublisher(fileSystem, new PortTreeCopyStrategy(fileSystem));
     input = {
       batchId: "33333333-3333-4333-8333-333333333333",
+      attempt: 1,
       backupRoot: fileSystem.resolve("backup"),
       productionRoot: fileSystem.resolve("production"),
       stagingRoot: fileSystem.root,
@@ -156,6 +157,74 @@ describe("backup and production publication", () => {
         ),
       ),
     ).resolves.toBeNull();
+    await expect(
+      fileSystem.stat(
+        fileSystem.resolve(
+          "production",
+          input.clientFolder,
+          input.orderFolder,
+          `.cs-transfer-${input.batchId}-production`,
+        ),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      fileSystem.stat(fileSystem.resolve("production", ".cs-file-agent-transfers", input.batchId)),
+    ).resolves.toBeNull();
+  });
+
+  it("sweeps abandoned share scratch outside the client tree on retry", async () => {
+    const abandoned = fileSystem.resolve(
+      "backup",
+      ".cs-file-agent-transfers",
+      input.batchId,
+      "1-backup",
+    );
+    await fileSystem.ensureDirectory(abandoned);
+    await fileSystem.writeStream(
+      fileSystem.resolve(
+        "backup",
+        ".cs-file-agent-transfers",
+        input.batchId,
+        "1-backup",
+        "partial.tif",
+      ),
+      Readable.from("partial"),
+    );
+
+    const retried = { ...input, attempt: 2 };
+    await publisher.writeBackup(retried, manifest);
+
+    await expect(
+      fileSystem.stat(fileSystem.resolve("backup", ".cs-file-agent-transfers", input.batchId)),
+    ).resolves.toBeNull();
+    const orderFiles = await fileSystem.listFiles(
+      fileSystem.resolve("backup", input.clientFolder, input.orderFolder),
+    );
+    expect(
+      orderFiles.every(
+        (file) =>
+          !file.relativePath.includes("cs-transfer") && !file.relativePath.endsWith(".partial"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports non-zero progress before a production copy operation returns", async () => {
+    await publisher.writeBackup(input, manifest);
+    class DelayedCopy implements TreeCopyStrategy {
+      async copy(source: string, destination: string): Promise<void> {
+        await fileSystem.copyTree(source, destination);
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+    }
+    const delayedPublisher = new TransferPublisher(fileSystem, new DelayedCopy());
+    const progress: Array<{ done: number; total: number }> = [];
+
+    await delayedPublisher.copyProduction(input, manifest, async (done, total) => {
+      progress.push({ done, total });
+    });
+
+    expect(progress[0]).toEqual({ done: 0, total: manifest[0]?.sizeBytes });
+    expect(progress.some(({ done }) => done > 0)).toBe(true);
   });
 });
 

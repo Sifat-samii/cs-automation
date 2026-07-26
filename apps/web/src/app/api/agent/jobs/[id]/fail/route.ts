@@ -6,6 +6,7 @@ import { failPipelineJob } from "@/lib/agent/pipeline";
 
 const requestSchema = z.object({
   leaseOwner: z.string().trim().min(1).max(200),
+  attempt: z.number().int().positive(),
   errorClass: z.enum(["TRANSIENT", "PERMANENT"]),
   error: z.string().trim().min(1).max(2_000),
 });

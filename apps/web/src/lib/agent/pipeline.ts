@@ -1,12 +1,14 @@
 import {
   type FileArtifactStage,
+  type DbClient,
   type PrismaClient,
   type TransferErrorClass,
   type TransferJobKind,
 } from "@cs/db";
 import { assertBatchTransition, type BatchStatus } from "@cs/shared";
 import { recordAudit } from "@/lib/audit";
-import { JobLeaseError } from "@/lib/agent/jobs";
+import { JobLeaseError, markTerminalPipelineFailure } from "@/lib/agent/jobs";
+import { handleBatchVerified } from "@/lib/outbound/verified";
 
 const NEXT_JOB = {
   DOWNLOAD: "STAGE_VERIFY",
@@ -39,8 +41,8 @@ export type PipelineArtifactInput = {
   stage: FileArtifactStage;
 };
 
-export async function queueBatchTransfer(
-  db: PrismaClient,
+async function queueBatchTransferOperation(
+  db: DbClient,
   input: { batchId: string; correlationId: string; maxAttempts?: number },
 ) {
   const maxAttempts = input.maxAttempts ?? 3;
@@ -48,47 +50,58 @@ export async function queueBatchTransfer(
     throw new Error("Maximum attempts must be between 1 and 20");
   }
 
-  return db.$transaction(async (transaction) => {
-    const batch = await transaction.orderBatch.findUnique({
-      where: { id: input.batchId },
-      select: { status: true },
-    });
-    if (!batch) throw new Error("Batch does not exist");
-    if (batch.status !== "PENDING" && batch.status !== "FAILED") {
-      throw new Error(`Batch ${input.batchId} cannot be queued from ${batch.status}`);
-    }
-    if (batch.status === "FAILED") {
-      assertBatchTransition("FAILED", "PENDING");
-      await transaction.orderBatch.update({
-        where: { id: input.batchId },
-        data: { status: "PENDING", failureReason: null },
-      });
-    }
-
-    return transaction.transferJob.upsert({
-      where: {
-        batchId_kind: { batchId: input.batchId, kind: "DOWNLOAD" },
-      },
-      create: {
-        batchId: input.batchId,
-        kind: "DOWNLOAD",
-        maxAttempts,
-        correlationId: input.correlationId,
-      },
-      update: {
-        status: "QUEUED",
-        attempts: 0,
-        maxAttempts,
-        leaseOwner: null,
-        leaseExpiresAt: null,
-        lastError: null,
-        errorClass: null,
-        bytesTotal: 0,
-        bytesDone: 0,
-        correlationId: input.correlationId,
-      },
-    });
+  const batch = await db.orderBatch.findUnique({
+    where: { id: input.batchId },
+    select: { status: true },
   });
+  if (!batch) throw new Error("Batch does not exist");
+  if (batch.status !== "PENDING" && batch.status !== "FAILED") {
+    throw new Error(`Batch ${input.batchId} cannot be queued from ${batch.status}`);
+  }
+  if (batch.status === "FAILED") {
+    assertBatchTransition("FAILED", "PENDING");
+    await db.orderBatch.update({
+      where: { id: input.batchId },
+      data: { status: "PENDING", failureReason: null },
+    });
+  }
+
+  return db.transferJob.upsert({
+    where: {
+      batchId_kind: { batchId: input.batchId, kind: "DOWNLOAD" },
+    },
+    create: {
+      batchId: input.batchId,
+      kind: "DOWNLOAD",
+      maxAttempts,
+      correlationId: input.correlationId,
+    },
+    update: {
+      status: "QUEUED",
+      attempts: 0,
+      maxAttempts,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      lastError: null,
+      errorClass: null,
+      bytesTotal: 0,
+      bytesDone: 0,
+      correlationId: input.correlationId,
+    },
+  });
+}
+
+function canStartTransaction(db: DbClient): db is PrismaClient {
+  return "$transaction" in db;
+}
+
+export async function queueBatchTransfer(
+  db: DbClient,
+  input: { batchId: string; correlationId: string; maxAttempts?: number },
+) {
+  return canStartTransaction(db)
+    ? db.$transaction((transaction) => queueBatchTransferOperation(transaction, input))
+    : queueBatchTransferOperation(db, input);
 }
 
 export async function completePipelineJob(
@@ -96,6 +109,7 @@ export async function completePipelineJob(
   input: {
     jobId: string;
     leaseOwner: string;
+    attempt: number;
     artifacts: readonly PipelineArtifactInput[];
     now?: Date;
   },
@@ -107,6 +121,7 @@ export async function completePipelineJob(
         id: input.jobId,
         status: "LEASED",
         leaseOwner: input.leaseOwner,
+        attempts: input.attempt,
         leaseExpiresAt: { gt: now },
       },
       include: {
@@ -209,6 +224,12 @@ export async function completePipelineJob(
       entityId: job.id,
       metadata: { batchId: job.batchId, batchStatus: nextStatus },
     });
+    if (job.kind === "VERIFY_PRODUCTION") {
+      await handleBatchVerified(transaction, {
+        batchId: job.batchId,
+        correlationId: job.correlationId,
+      });
+    }
 
     return { jobId: job.id, batchId: job.batchId, batchStatus: nextStatus, nextKind };
   });
@@ -219,6 +240,7 @@ export async function failPipelineJob(
   input: {
     jobId: string;
     leaseOwner: string;
+    attempt: number;
     errorClass: TransferErrorClass;
     error: string;
     now?: Date;
@@ -231,6 +253,7 @@ export async function failPipelineJob(
         id: input.jobId,
         status: "LEASED",
         leaseOwner: input.leaseOwner,
+        attempts: input.attempt,
         leaseExpiresAt: { gt: now },
       },
       include: { batch: { include: { order: { select: { id: true } } } } },
@@ -240,51 +263,21 @@ export async function failPipelineJob(
     }
 
     const terminal = input.errorClass === "PERMANENT" || job.attempts >= job.maxAttempts;
-    const updated = await transaction.transferJob.update({
+    if (terminal) {
+      return markTerminalPipelineFailure(transaction, job, {
+        errorClass: input.errorClass,
+        error: input.error,
+      });
+    }
+    return transaction.transferJob.update({
       where: { id: job.id },
       data: {
-        status: terminal ? "FAILED" : "QUEUED",
+        status: "QUEUED",
         leaseOwner: null,
         leaseExpiresAt: null,
         lastError: input.error.slice(0, 2_000),
         errorClass: input.errorClass,
       },
     });
-    if (terminal && job.batch.status !== "FAILED") {
-      assertBatchTransition(job.batch.status as BatchStatus, "FAILED");
-      await transaction.orderBatch.update({
-        where: { id: job.batchId },
-        data: { status: "FAILED", failureReason: input.error.slice(0, 1_000) },
-      });
-      const eventType = "transfer.failed";
-      await transaction.orderEvent.create({
-        data: {
-          orderId: job.batch.order.id,
-          batchId: job.batchId,
-          type: eventType,
-          payload: {
-            jobId: job.id,
-            jobKind: job.kind,
-            errorClass: input.errorClass,
-          },
-          actorLabel: "File Agent",
-          correlationId: job.correlationId,
-        },
-      });
-      await recordAudit(transaction, {
-        correlationId: job.correlationId,
-        actorUserId: null,
-        actorLabel: "File Agent",
-        action: eventType,
-        entityType: "TransferJob",
-        entityId: job.id,
-        metadata: {
-          batchId: job.batchId,
-          jobKind: job.kind,
-          errorClass: input.errorClass,
-        },
-      });
-    }
-    return updated;
   });
 }

@@ -14,6 +14,8 @@ const MARKER_FILE_NAME = ".cs-order.json";
 const MARKER_SCHEMA_VERSION = 1;
 const MARKER_MAX_BYTES = 64 * 1024;
 const FREE_SPACE_MARGIN_BYTES = 256 * 1024 * 1024;
+const COPY_PROGRESS_INTERVAL_MS = 250;
+const TRANSFER_SCRATCH_DIRECTORY = ".cs-file-agent-transfers";
 
 export type OrderMarker = {
   orderId: string;
@@ -25,6 +27,7 @@ export type OrderMarker = {
 
 export type TransferLocation = {
   batchId: string;
+  attempt: number;
   backupRoot: string;
   productionRoot: string;
   stagingRoot: string;
@@ -46,6 +49,8 @@ export type PublishedTransfer = {
 export type PublishedArtifact = Omit<ManifestArtifact, "stage"> & {
   stage: "BACKUP" | "PRODUCTION";
 };
+
+export type TransferProgressCallback = (bytesDone: number, bytesTotal: number) => Promise<void>;
 
 export interface TreeCopyStrategy {
   copy(source: string, destination: string): Promise<void>;
@@ -172,6 +177,7 @@ function markerMatches(value: unknown, expected: OrderMarker): boolean {
 async function ensureMarker(
   fileSystem: FileSystemPort,
   orderDirectory: string,
+  scratchPath: string,
   expected: OrderMarker,
 ): Promise<void> {
   const path = join(orderDirectory, MARKER_FILE_NAME);
@@ -192,16 +198,15 @@ async function ensureMarker(
     return;
   }
 
-  const partial = `${path}.partial`;
-  await fileSystem.remove(partial);
+  await fileSystem.remove(scratchPath);
   try {
     await fileSystem.writeStream(
-      partial,
+      scratchPath,
       Readable.from(`${JSON.stringify(expected, null, 2)}\n`, { encoding: "utf8" }),
     );
-    await fileSystem.move(partial, path);
+    await fileSystem.move(scratchPath, path);
   } catch (error) {
-    await fileSystem.remove(partial);
+    await fileSystem.remove(scratchPath);
     throw asTransferFailure(error, "Order marker write failed");
   }
 }
@@ -291,6 +296,69 @@ async function prepareDestination(
   }
 }
 
+function transferScratchRoot(root: string, batchId: string): string {
+  return join(root, TRANSFER_SCRATCH_DIRECTORY, batchId);
+}
+
+function transferScratchPath(
+  root: string,
+  input: TransferLocation,
+  stage: "backup" | "production" | "marker",
+): string {
+  return join(transferScratchRoot(root, input.batchId), `${input.attempt}-${stage}`);
+}
+
+async function copyWithProgress(
+  fileSystem: FileSystemPort,
+  strategy: TreeCopyStrategy,
+  source: string,
+  destination: string,
+  bytesTotal: number,
+  onProgress?: TransferProgressCallback,
+): Promise<void> {
+  if (!onProgress) {
+    await strategy.copy(source, destination);
+    return;
+  }
+
+  await onProgress(0, bytesTotal);
+  let progressError: unknown;
+  let reporting = false;
+  let lastReported = 0;
+  const interval = setInterval(() => {
+    if (reporting || progressError) return;
+    reporting = true;
+    void fileSystem
+      .stat(destination)
+      .then(async (destinationStat) => {
+        if (!destinationStat) return;
+        const files = await fileSystem.listFiles(destination);
+        const copied = Math.min(
+          bytesTotal,
+          files.reduce((total, file) => total + file.sizeBytes, 0),
+        );
+        if (copied > lastReported) {
+          lastReported = copied;
+          await onProgress(copied, bytesTotal);
+        }
+      })
+      .catch((error: unknown) => {
+        progressError = error;
+      })
+      .finally(() => {
+        reporting = false;
+      });
+  }, COPY_PROGRESS_INTERVAL_MS);
+
+  try {
+    await strategy.copy(source, destination);
+    if (progressError) throw progressError;
+    await onProgress(bytesTotal, bytesTotal);
+  } finally {
+    clearInterval(interval);
+  }
+}
+
 export class TransferPublisher {
   private readonly fileSystem: FileSystemPort;
   private readonly productionCopy: TreeCopyStrategy;
@@ -314,21 +382,30 @@ export class TransferPublisher {
     await verifyManifest(this.fileSystem, staged, manifest, "BACKUP");
     const orderDirectory = join(input.backupRoot, input.clientFolder, input.orderFolder);
     const destination = join(orderDirectory, input.batchSubfolder);
-    await this.fileSystem.ensureDirectory(orderDirectory);
-    await ensureMarker(this.fileSystem, orderDirectory, markerFor(input));
-
-    const resumed = await prepareDestination(this.fileSystem, destination, manifest, "BACKUP");
-    if (resumed) return resumed;
-
-    const partial = join(orderDirectory, `.cs-transfer-${input.batchId}-backup`);
-    await this.fileSystem.remove(partial);
+    const scratchRoot = transferScratchRoot(input.backupRoot, input.batchId);
+    const partial = transferScratchPath(input.backupRoot, input, "backup");
+    await this.fileSystem.remove(scratchRoot);
+    await this.fileSystem.ensureDirectory(scratchRoot);
     try {
+      await this.fileSystem.ensureDirectory(orderDirectory);
+      await ensureMarker(
+        this.fileSystem,
+        orderDirectory,
+        transferScratchPath(input.backupRoot, input, "marker"),
+        markerFor(input),
+      );
+      const resumed = await prepareDestination(this.fileSystem, destination, manifest, "BACKUP");
+      if (resumed) {
+        await this.fileSystem.remove(scratchRoot);
+        return resumed;
+      }
       await this.fileSystem.copyTree(staged, partial);
       const verified = await verifyManifest(this.fileSystem, partial, manifest, "BACKUP");
       await this.fileSystem.move(partial, destination);
+      await this.fileSystem.remove(scratchRoot);
       return { ...verified, directory: destination };
     } catch (error) {
-      await this.fileSystem.remove(partial);
+      await this.fileSystem.remove(scratchRoot);
       throw asTransferFailure(error, "Backup write failed");
     }
   }
@@ -336,6 +413,7 @@ export class TransferPublisher {
   async copyProduction(
     input: TransferLocation,
     manifest: readonly ManifestArtifact[],
+    onProgress?: TransferProgressCallback,
   ): Promise<PublishedTransfer> {
     const bytesTotal = totalManifestBytes(manifest);
     if (manifest.length === 0 || bytesTotal === 0) {
@@ -353,21 +431,42 @@ export class TransferPublisher {
 
     const orderDirectory = join(input.productionRoot, input.clientFolder, input.orderFolder);
     const destination = join(orderDirectory, input.batchSubfolder);
-    await this.fileSystem.ensureDirectory(orderDirectory);
-    await ensureMarker(this.fileSystem, orderDirectory, markerFor(input));
-
-    const resumed = await prepareDestination(this.fileSystem, destination, manifest, "PRODUCTION");
-    if (resumed) return resumed;
-
-    const partial = join(orderDirectory, `.cs-transfer-${input.batchId}-production`);
-    await this.fileSystem.remove(partial);
+    const scratchRoot = transferScratchRoot(input.productionRoot, input.batchId);
+    const partial = transferScratchPath(input.productionRoot, input, "production");
+    await this.fileSystem.remove(scratchRoot);
+    await this.fileSystem.ensureDirectory(scratchRoot);
     try {
-      await this.productionCopy.copy(backupBatch, partial);
+      await this.fileSystem.ensureDirectory(orderDirectory);
+      await ensureMarker(
+        this.fileSystem,
+        orderDirectory,
+        transferScratchPath(input.productionRoot, input, "marker"),
+        markerFor(input),
+      );
+      const resumed = await prepareDestination(
+        this.fileSystem,
+        destination,
+        manifest,
+        "PRODUCTION",
+      );
+      if (resumed) {
+        await this.fileSystem.remove(scratchRoot);
+        return resumed;
+      }
+      await copyWithProgress(
+        this.fileSystem,
+        this.productionCopy,
+        backupBatch,
+        partial,
+        bytesTotal,
+        onProgress,
+      );
       const verified = await verifyManifest(this.fileSystem, partial, manifest, "PRODUCTION");
       await this.fileSystem.move(partial, destination);
+      await this.fileSystem.remove(scratchRoot);
       return { ...verified, directory: destination };
     } catch (error) {
-      await this.fileSystem.remove(partial);
+      await this.fileSystem.remove(scratchRoot);
       throw asTransferFailure(error, "Production copy failed");
     }
   }

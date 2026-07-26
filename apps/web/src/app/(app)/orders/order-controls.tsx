@@ -159,12 +159,21 @@ export function BatchStatusForm({
   orderId,
   batchId,
   status,
+  hasTransferJobs,
 }: {
   orderId: string;
   batchId: string;
   status: BatchStatus;
+  hasTransferJobs: boolean;
 }) {
   const [state, action] = useActionState(setBatchStatusAction, initialState);
+  if (hasTransferJobs) {
+    return (
+      <p className="mt-4 border-t border-slate-200 pt-4 text-xs text-slate-500">
+        Batch status is controlled by the transfer pipeline.
+      </p>
+    );
+  }
   const nextStatuses = BATCH_STATUSES.filter((next) => batchTransition(status, next));
   if (nextStatuses.length === 0) {
     return <p className="text-xs text-slate-500">Terminal batch</p>;

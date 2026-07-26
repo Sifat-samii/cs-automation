@@ -13,6 +13,15 @@ const correlationId = "22222222-2222-4222-8222-222222222222";
 const secret = "0123456789abcdef0123456789abcdef";
 
 async function createQueuedJob() {
+  await prisma.user.create({
+    data: {
+      id: actorUserId,
+      loginId: "2061",
+      displayName: "Sifat Sami",
+      passwordHash: "test-only-password-hash",
+      role: "CS_LEAD",
+    },
+  });
   const client = await prisma.client.create({
     data: { code: "VRLY", displayName: "Verily", folderName: "Verily" },
   });
@@ -132,6 +141,7 @@ describe("HMAC-signed agent job API", () => {
     const progress = await progressRoute(
       signedRequest(`http://localhost/api/agent/jobs/${queued.id}/progress`, {
         leaseOwner: "file-agent-1",
+        attempt: 1,
         bytesDone: 512,
         bytesTotal: 1024,
       }),
@@ -142,6 +152,7 @@ describe("HMAC-signed agent job API", () => {
     const complete = await completeRoute(
       signedRequest(`http://localhost/api/agent/jobs/${queued.id}/complete`, {
         leaseOwner: "file-agent-1",
+        attempt: 1,
       }),
       params(queued.id),
     );
@@ -164,6 +175,7 @@ describe("HMAC-signed agent job API", () => {
     const response = await failRoute(
       signedRequest(`http://localhost/api/agent/jobs/${queued.id}/fail`, {
         leaseOwner: "file-agent-1",
+        attempt: 1,
         errorClass: "PERMANENT",
         error: "Manual drop required",
       }),

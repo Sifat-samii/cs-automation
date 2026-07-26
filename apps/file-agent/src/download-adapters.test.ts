@@ -126,6 +126,70 @@ describe("download adapters", () => {
     ).resolves.toEqual([]);
   });
 
+  it("keeps colliding Dropbox filenames distinct by source id", async () => {
+    const { baseUrl } = await fakeServer((request, response) => {
+      const body = request.url?.includes("second") ? "second" : "first";
+      response.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "content-length": String(Buffer.byteLength(body)),
+        "content-disposition": 'attachment; filename="files.zip"',
+      });
+      response.end(body);
+    });
+    const adapter = new DropboxPublicAdapter(fileSystem, async (input, init) => {
+      const source = new URL(String(input));
+      return fetch(`${baseUrl}/${source.pathname.includes("second") ? "second" : "first"}`, init);
+    });
+    const common = {
+      batchId: "batch-collision",
+      stagingRoot: fileSystem.root,
+      manualDropConfirmed: false,
+    };
+
+    await adapter.download({
+      ...common,
+      sourceId: "source-one",
+      sourceUrl: "https://dropbox.com/s/first/files.zip?dl=0",
+    });
+    const result = await adapter.download({
+      ...common,
+      sourceId: "source-two",
+      sourceUrl: "https://dropbox.com/s/second/files.zip?dl=0",
+    });
+
+    expect(result.files).toEqual([
+      expect.objectContaining({ relativePath: "source-one__files.zip", sizeBytes: 5 }),
+      expect.objectContaining({ relativePath: "source-two__files.zip", sizeBytes: 6 }),
+    ]);
+  });
+
+  it("reports non-zero progress while streaming a Dropbox response", async () => {
+    const { baseUrl } = await fakeServer((_request, response) => {
+      response.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "content-length": "7",
+        "content-disposition": 'attachment; filename="order.zip"',
+      });
+      response.end("archive");
+    });
+    const progress: Array<{ done: number; total: number }> = [];
+    const adapter = new DropboxPublicAdapter(fileSystem, async (_input, init) =>
+      fetch(baseUrl, init),
+    );
+
+    await adapter.download({
+      batchId: "batch-progress",
+      stagingRoot: fileSystem.root,
+      sourceUrl: "https://dropbox.com/s/progress/order.zip?dl=0",
+      manualDropConfirmed: false,
+      onProgress: async (done, total) => {
+        progress.push({ done, total });
+      },
+    });
+
+    expect(progress).toContainEqual({ done: 7, total: 7 });
+  });
+
   it("requires operator confirmation before copying a manual drop", async () => {
     const adapter = new ManualDropAdapter(fileSystem);
     const manual = fileSystem.resolve("manual", "batch-4");

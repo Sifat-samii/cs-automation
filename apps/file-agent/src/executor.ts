@@ -3,6 +3,7 @@ import {
   DropboxPublicAdapter,
   GoogleDriveAdapter,
   ManualDropAdapter,
+  type TransferProgressCallback,
 } from "./download-adapters.js";
 import type { FileSystemPort } from "./filesystem.js";
 import type { AgentArtifact, AgentJob } from "./api-client.js";
@@ -15,9 +16,12 @@ export type ExecutionResult = {
   bytesTotal: number;
 };
 
+export type ExecuteProgress = TransferProgressCallback;
+
 function transferLocation(job: AgentJob, env: FileAgentEnv): TransferLocation {
   return {
     batchId: job.batch.id,
+    attempt: job.attempts,
     backupRoot: env.BACKUP_ROOT_UNC,
     productionRoot: env.PRODUCTION_ROOT_UNC,
     stagingRoot: env.STAGING_ROOT,
@@ -56,7 +60,7 @@ export class TransferJobExecutor {
     this.publisher = input.publisher;
   }
 
-  async execute(job: AgentJob): Promise<ExecutionResult> {
+  async execute(job: AgentJob, onProgress?: ExecuteProgress): Promise<ExecutionResult> {
     const location = transferLocation(job, this.env);
     switch (job.kind) {
       case "DOWNLOAD": {
@@ -64,6 +68,7 @@ export class TransferJobExecutor {
           batchId: job.batch.id,
           stagingRoot: this.env.STAGING_ROOT,
           manualDropConfirmed: job.batch.manualDropConfirmed,
+          ...(onProgress ? { onProgress } : {}),
         };
         if (job.batch.manualDropConfirmed) {
           const result = await new ManualDropAdapter(this.fileSystem).download(input);
@@ -76,9 +81,16 @@ export class TransferJobExecutor {
           for (const source of dropbox) {
             const result = await new DropboxPublicAdapter(this.fileSystem).download({
               ...input,
+              sourceId: source.id,
               ...(source.url ? { sourceUrl: source.url } : {}),
+              ...(onProgress
+                ? {
+                    onProgress: async (bytesDone, sourceBytesTotal) =>
+                      onProgress(bytesTotal + bytesDone, bytesTotal + sourceBytesTotal),
+                  }
+                : {}),
             });
-            bytesTotal = result.files.reduce((total, file) => total + file.sizeBytes, 0);
+            bytesTotal += result.bytesTotal;
           }
           return { artifacts: [], bytesTotal };
         }
@@ -107,7 +119,11 @@ export class TransferJobExecutor {
         return { artifacts: result.artifacts, bytesTotal: result.bytesTotal };
       }
       case "COPY_PRODUCTION": {
-        const result = await this.publisher.copyProduction(location, stagedManifest(job));
+        const result = await this.publisher.copyProduction(
+          location,
+          stagedManifest(job),
+          onProgress,
+        );
         return { artifacts: result.artifacts, bytesTotal: result.bytesTotal };
       }
       case "VERIFY_PRODUCTION": {

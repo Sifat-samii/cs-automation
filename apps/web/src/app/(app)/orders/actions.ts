@@ -12,6 +12,11 @@ import { addBatch } from "@/lib/orders/batches";
 import { createOrder } from "@/lib/orders/create";
 import { setBatchStatus, setEta, setOrderStatus } from "@/lib/orders/lifecycle";
 import {
+  approveOutboundEmail,
+  OutboundCopyGateError,
+  OutboundStateError,
+} from "@/lib/outbound/service";
+import {
   confirmManualDropAndRetry,
   retryBatchTransfer,
   startBatchTransfer,
@@ -70,6 +75,11 @@ export type OrderActionState = { error: string | null };
 const transferControlSchema = z.object({
   orderId: z.uuid(),
   batchId: z.uuid(),
+});
+
+const outboundApprovalSchema = z.object({
+  orderId: z.uuid(),
+  outboundEmailId: z.uuid(),
 });
 
 async function requireOrderWriter() {
@@ -342,6 +352,46 @@ export async function confirmManualDropAction(
     });
   } catch {
     return { error: "Manual drop can be confirmed only after a permanent download failure." };
+  }
+  revalidatePath(`/orders/${parsed.data.orderId}`);
+  return { error: null };
+}
+
+export async function approveOutboundEmailAction(
+  _previous: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  const user = await requireOrderWriter();
+  const parsed = outboundApprovalSchema.safeParse({
+    orderId: formData.get("orderId"),
+    outboundEmailId: formData.get("outboundEmailId"),
+  });
+  if (!parsed.success) return { error: "The outbound draft selection is invalid." };
+
+  try {
+    const outbound = await prisma.outboundEmail.findFirst({
+      where: {
+        id: parsed.data.outboundEmailId,
+        orderId: parsed.data.orderId,
+      },
+      select: { id: true },
+    });
+    if (!outbound) return { error: "The outbound draft does not belong to this order." };
+    await approveOutboundEmail(prisma, {
+      outboundEmailId: outbound.id,
+      approvedById: user.userId,
+    });
+  } catch (error) {
+    if (error instanceof OutboundCopyGateError) {
+      return {
+        error:
+          "Approval is blocked until owner-approved client email copy replaces the placeholder.",
+      };
+    }
+    if (error instanceof OutboundStateError) {
+      return { error: error.message };
+    }
+    return { error: "The outbound email could not be approved." };
   }
   revalidatePath(`/orders/${parsed.data.orderId}`);
   return { error: null };

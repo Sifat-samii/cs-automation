@@ -9,12 +9,17 @@ import {
 } from "./transfer-errors.js";
 
 const HTML_PEEK_BYTES = 1_024;
+const PROGRESS_INTERVAL_BYTES = 8 * 1024 * 1024;
+
+export type TransferProgressCallback = (bytesDone: number, bytesTotal: number) => Promise<void>;
 
 export type DownloadInput = {
   batchId: string;
   stagingRoot: string;
+  sourceId?: string;
   sourceUrl?: string;
   manualDropConfirmed: boolean;
+  onProgress?: TransferProgressCallback;
 };
 
 export type DownloadResult = {
@@ -175,11 +180,15 @@ export class DropboxPublicAdapter implements DownloadAdapter {
       );
     }
 
-    const fileName = responseFileName(response, source, input.batchId);
+    const responseName = responseFileName(response, source, input.batchId);
+    const fileName = input.sourceId
+      ? `${sanitisePathSegment(input.sourceId)}__${responseName}`
+      : responseName;
     const target = join(directory, fileName);
     const partial = `${target}.partial`;
     const existing = await this.fileSystem.stat(target);
     if (existing?.isFile && existing.sizeBytes > 0) {
+      await peeked.stream.cancel();
       return {
         directory,
         files: await this.fileSystem.listFiles(directory),
@@ -191,10 +200,19 @@ export class DropboxPublicAdapter implements DownloadAdapter {
 
     const expectedBytes = parseContentLength(response.headers.get("content-length"));
     let receivedBytes = 0;
+    let reportedBytes = 0;
     const counted = peeked.stream.pipeThrough(
       new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, controller) {
+        async transform(chunk, controller) {
           receivedBytes += chunk.byteLength;
+          if (
+            input.onProgress &&
+            (receivedBytes - reportedBytes >= PROGRESS_INTERVAL_BYTES ||
+              receivedBytes === expectedBytes)
+          ) {
+            reportedBytes = receivedBytes;
+            await input.onProgress(receivedBytes, expectedBytes ?? receivedBytes);
+          }
           controller.enqueue(chunk);
         },
       }),
@@ -206,6 +224,9 @@ export class DropboxPublicAdapter implements DownloadAdapter {
         throw new TransientTransferFailure(
           `Dropbox response was truncated: expected ${expectedBytes} bytes, received ${receivedBytes}`,
         );
+      }
+      if (input.onProgress && reportedBytes !== receivedBytes) {
+        await input.onProgress(receivedBytes, expectedBytes ?? receivedBytes);
       }
       await this.fileSystem.move(partial, target);
     } catch (error) {

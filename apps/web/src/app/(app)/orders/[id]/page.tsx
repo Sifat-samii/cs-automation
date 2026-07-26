@@ -3,6 +3,7 @@ import { parseServerEnv, type OrderStatus } from "@cs/shared";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AddBatchForm, EtaForm, OrderStatusForm } from "@/app/(app)/orders/order-controls";
+import { OutboundEmailList, type OutboundEmailView } from "@/app/(app)/orders/outbound-email-list";
 import { TransferMonitor, type TransferJobView } from "@/app/(app)/orders/transfer-monitor";
 import { requireUser } from "@/lib/auth/current-user";
 import { assertCan } from "@/lib/auth/rbac";
@@ -32,6 +33,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         },
       },
       events: { orderBy: { occurredAt: "asc" } },
+      outboundEmails: { orderBy: { createdAt: "asc" } },
     },
   });
   if (!order) notFound();
@@ -106,6 +108,28 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           </div>
         </section>
       )}
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-bold text-slate-950">Outbound email</h2>
+          <p className="text-sm text-slate-600">
+            Drafts require recorded human approval before the Gmail transport can see them.
+          </p>
+        </div>
+        <OutboundEmailList
+          orderId={order.id}
+          outboundEmails={order.outboundEmails.map((outbound): OutboundEmailView => ({
+            id: outbound.id,
+            template: outbound.template,
+            renderedSubject: outbound.renderedSubject,
+            renderedBody: outbound.renderedBody,
+            status: outbound.status,
+            approvedAt: outbound.approvedAt?.toISOString() ?? null,
+            sentMessageId: outbound.sentMessageId,
+            lastError: outbound.lastError,
+          }))}
+        />
+      </section>
 
       <section className="space-y-4">
         <div>

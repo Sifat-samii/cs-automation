@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from "@cs/db";
+import { Prisma, type DbClient, type PrismaClient } from "@cs/db";
 import { recordAudit } from "@/lib/audit";
 import type { OrderMutationActor, SourceLinkInput } from "@/lib/orders/create";
 
@@ -38,82 +38,84 @@ function isBatchSequenceCollision(error: unknown): boolean {
   );
 }
 
-export async function addBatch(db: PrismaClient, input: AddBatchInput) {
+export async function addBatchInTransaction(db: DbClient, input: AddBatchInput) {
   const notes = input.notes?.trim();
   const sourceLinks = (input.sourceLinks ?? []).map((source) =>
     normaliseSourceLink(source, input.actor.userId),
   );
 
+  const order = await db.order.findUnique({
+    where: { id: input.orderId },
+    select: { id: true, status: true },
+  });
+  if (!order) {
+    throw new Error("Order does not exist");
+  }
+  if (order.status === "CLOSED" || order.status === "CANCELLED") {
+    throw new Error(`Cannot add a batch to terminal order ${order.status}`);
+  }
+
+  const latestBatch = await db.orderBatch.findFirst({
+    where: { orderId: order.id },
+    orderBy: { sequence: "desc" },
+    select: { sequence: true },
+  });
+  const sequence = (latestBatch?.sequence ?? 0) + 1;
+  const subfolder = `${sequence.toString().padStart(2, "0")}_${input.kind}`;
+  const batch = await db.orderBatch.create({
+    data: {
+      orderId: order.id,
+      sequence,
+      kind: input.kind,
+      subfolder,
+      ...(notes ? { notes } : {}),
+      createdById: input.actor.userId,
+      ...(sourceLinks.length > 0
+        ? {
+            sourceLinks: {
+              create: sourceLinks,
+            },
+          }
+        : {}),
+    },
+  });
+
+  await db.orderEvent.create({
+    data: {
+      orderId: order.id,
+      batchId: batch.id,
+      type: "batch.added",
+      payload: {
+        sequence,
+        kind: input.kind,
+        status: "PENDING",
+      },
+      actorUserId: input.actor.userId,
+      actorLabel: input.actor.label,
+      correlationId: input.correlationId,
+    },
+  });
+  await recordAudit(db, {
+    correlationId: input.correlationId,
+    actorUserId: input.actor.userId,
+    actorLabel: input.actor.label,
+    action: "batch.added",
+    entityType: "OrderBatch",
+    entityId: batch.id,
+    metadata: {
+      orderId: order.id,
+      sequence,
+      kind: input.kind,
+    },
+  });
+
+  return batch;
+}
+
+export async function addBatch(db: PrismaClient, input: AddBatchInput) {
   for (let retry = 0; retry <= MAX_SEQUENCE_RETRIES; retry += 1) {
     try {
-      return await db.$transaction(async (transaction) => {
-        const order = await transaction.order.findUnique({
-          where: { id: input.orderId },
-          select: { id: true, status: true },
-        });
-        if (!order) {
-          throw new Error("Order does not exist");
-        }
-        if (order.status === "CLOSED" || order.status === "CANCELLED") {
-          throw new Error(`Cannot add a batch to terminal order ${order.status}`);
-        }
-
-        const latestBatch = await transaction.orderBatch.findFirst({
-          where: { orderId: order.id },
-          orderBy: { sequence: "desc" },
-          select: { sequence: true },
-        });
-        const sequence = (latestBatch?.sequence ?? 0) + 1;
-        const subfolder = `${sequence.toString().padStart(2, "0")}_${input.kind}`;
-        const batch = await transaction.orderBatch.create({
-          data: {
-            orderId: order.id,
-            sequence,
-            kind: input.kind,
-            subfolder,
-            ...(notes ? { notes } : {}),
-            createdById: input.actor.userId,
-            ...(sourceLinks.length > 0
-              ? {
-                  sourceLinks: {
-                    create: sourceLinks,
-                  },
-                }
-              : {}),
-          },
-        });
-
-        await transaction.orderEvent.create({
-          data: {
-            orderId: order.id,
-            batchId: batch.id,
-            type: "batch.added",
-            payload: {
-              sequence,
-              kind: input.kind,
-              status: "PENDING",
-            },
-            actorUserId: input.actor.userId,
-            actorLabel: input.actor.label,
-            correlationId: input.correlationId,
-          },
-        });
-        await recordAudit(transaction, {
-          correlationId: input.correlationId,
-          actorUserId: input.actor.userId,
-          actorLabel: input.actor.label,
-          action: "batch.added",
-          entityType: "OrderBatch",
-          entityId: batch.id,
-          metadata: {
-            orderId: order.id,
-            sequence,
-            kind: input.kind,
-          },
-        });
-
-        return batch;
-      });
+      return await db.$transaction((transaction) => addBatchInTransaction(transaction, input));
     } catch (error) {
       if (retry < MAX_SEQUENCE_RETRIES && isBatchSequenceCollision(error)) {
         continue;

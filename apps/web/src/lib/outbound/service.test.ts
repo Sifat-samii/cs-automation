@@ -1,0 +1,317 @@
+import { prisma } from "@cs/db";
+import { resetDatabase } from "@cs/db/testing";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { setEta } from "@/lib/orders/lifecycle";
+import {
+  approveOutboundEmail,
+  draftOutboundEmail,
+  claimPendingOutbound,
+  markOutboundSent,
+  OutboundCopyGateError,
+  OutboundStateError,
+} from "@/lib/outbound/service";
+import { GATE_BLOCKED_PLACEHOLDER } from "@/lib/outbound/templates";
+
+const actorUserId = "11111111-1111-4111-8111-111111111111";
+
+async function createFixtures(): Promise<{ orderId: string }> {
+  await prisma.user.create({
+    data: {
+      id: actorUserId,
+      loginId: "2061",
+      displayName: "Sifat Sami",
+      passwordHash: "test-only-password-hash",
+      role: "CS_LEAD",
+    },
+  });
+  const client = await prisma.client.create({
+    data: { code: "VRLY", displayName: "Verily", folderName: "Verily" },
+  });
+  const order = await prisma.order.create({
+    data: {
+      code: "VRLY_260726_001",
+      clientId: client.id,
+      title: "Spring Drop",
+      orderType: "Standard",
+      gmailThreadId: "gmail-thread-1",
+      folderName: "VRLY_260726_001__spring_drop",
+      backupPath: "\\\\server\\backup\\Verily\\VRLY_260726_001__spring_drop",
+      productionPath: "\\\\server\\production\\Verily\\VRLY_260726_001__spring_drop",
+      createdById: actorUserId,
+      emailMessages: {
+        create: {
+          gmailMessageId: "gmail-message-1",
+          gmailThreadId: "gmail-thread-1",
+          direction: "INBOUND",
+          fromAddress: "buyer@example.com",
+          toAddresses: ["cs@example.test"],
+          subject: "Request",
+          bodyText: "Files",
+          receivedAt: new Date("2026-07-26T12:00:00.000Z"),
+        },
+      },
+    },
+  });
+  return { orderId: order.id };
+}
+
+describe("outbound email service", () => {
+  beforeEach(async () => {
+    await resetDatabase(prisma);
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("renders placeholder drafts idempotently and refuses human approval", async () => {
+    const { orderId } = await createFixtures();
+    const first = await draftOutboundEmail(prisma, {
+      orderId,
+      template: "ACKNOWLEDGEMENT",
+      idempotencyKey: "ack:test",
+    });
+    const second = await draftOutboundEmail(prisma, {
+      orderId,
+      template: "ACKNOWLEDGEMENT",
+      idempotencyKey: "ack:test",
+    });
+    expect(second.id).toBe(first.id);
+    expect(first.renderedSubject).toBe(GATE_BLOCKED_PLACEHOLDER);
+    await expect(
+      approveOutboundEmail(prisma, {
+        outboundEmailId: first.id,
+        approvedById: actorUserId,
+      }),
+    ).rejects.toBeInstanceOf(OutboundCopyGateError);
+    await expect(
+      prisma.outboundEmail.findUniqueOrThrow({ where: { id: first.id } }),
+    ).resolves.toMatchObject({ status: "DRAFT", approvedById: null });
+  });
+
+  it("pending atomically claims only human-approved rows with the original thread recipient", async () => {
+    const { orderId } = await createFixtures();
+    await draftOutboundEmail(prisma, {
+      orderId,
+      template: "ACKNOWLEDGEMENT",
+      idempotencyKey: "ack:draft",
+    });
+    await prisma.outboundEmail.create({
+      data: {
+        orderId,
+        template: "FILES_VERIFIED",
+        renderedSubject: "Approved subject",
+        renderedBody: "Approved body",
+        status: "APPROVED",
+        approvedById: actorUserId,
+        approvedAt: new Date("2026-07-26T13:00:00.000Z"),
+        idempotencyKey: "verified:approved",
+        gmailThreadId: "gmail-thread-1",
+      },
+    });
+
+    await expect(claimPendingOutbound(prisma)).resolves.toEqual([
+      expect.objectContaining({
+        idempotencyKey: "verified:approved",
+        toAddress: "buyer@example.com",
+        gmailThreadId: "gmail-thread-1",
+        status: "SENDING",
+      }),
+    ]);
+    await expect(claimPendingOutbound(prisma)).resolves.toEqual([]);
+    await expect(
+      prisma.outboundEmail.findUniqueOrThrow({
+        where: { idempotencyKey: "verified:approved" },
+      }),
+    ).resolves.toMatchObject({ status: "SENDING" });
+  });
+
+  it("allows exactly one concurrent poll to claim an approved row", async () => {
+    const { orderId } = await createFixtures();
+    await prisma.outboundEmail.create({
+      data: {
+        orderId,
+        template: "FILES_VERIFIED",
+        renderedSubject: "Approved subject",
+        renderedBody: "Approved body",
+        status: "APPROVED",
+        approvedById: actorUserId,
+        approvedAt: new Date("2026-07-26T13:00:00.000Z"),
+        idempotencyKey: "verified:concurrent",
+        gmailThreadId: "gmail-thread-1",
+      },
+    });
+
+    const results = await Promise.all([
+      claimPendingOutbound(prisma, 1),
+      claimPendingOutbound(prisma, 1),
+    ]);
+    expect(results.flat()).toHaveLength(1);
+    await expect(
+      prisma.outboundEmail.findUniqueOrThrow({
+        where: { idempotencyKey: "verified:concurrent" },
+      }),
+    ).resolves.toMatchObject({ status: "SENDING" });
+  });
+
+  it("fails an invalid row in isolation without blocking valid outbound", async () => {
+    const { orderId } = await createFixtures();
+    await prisma.outboundEmail.createMany({
+      data: [
+        {
+          orderId,
+          template: "FILES_VERIFIED",
+          renderedSubject: "Invalid",
+          renderedBody: "Invalid",
+          status: "APPROVED",
+          approvedById: actorUserId,
+          approvedAt: new Date("2026-07-26T13:00:00.000Z"),
+          idempotencyKey: "verified:invalid",
+          gmailThreadId: "missing-thread",
+        },
+        {
+          orderId,
+          template: "FILES_VERIFIED",
+          renderedSubject: "Valid",
+          renderedBody: "Valid",
+          status: "APPROVED",
+          approvedById: actorUserId,
+          approvedAt: new Date("2026-07-26T13:01:00.000Z"),
+          idempotencyKey: "verified:valid",
+          gmailThreadId: "gmail-thread-1",
+        },
+      ],
+    });
+
+    await expect(claimPendingOutbound(prisma)).resolves.toEqual([
+      expect.objectContaining({ idempotencyKey: "verified:valid", status: "SENDING" }),
+    ]);
+    await expect(
+      prisma.outboundEmail.findUniqueOrThrow({
+        where: { idempotencyKey: "verified:invalid" },
+      }),
+    ).resolves.toMatchObject({
+      status: "FAILED",
+      lastError: "No inbound recipient exists for this Gmail thread",
+    });
+  });
+
+  it("cannot mark a draft sent and marks an approved row sent idempotently", async () => {
+    const { orderId } = await createFixtures();
+    const draft = await draftOutboundEmail(prisma, {
+      orderId,
+      template: "ACKNOWLEDGEMENT",
+      idempotencyKey: "ack:draft",
+    });
+    await expect(
+      markOutboundSent(prisma, {
+        outboundEmailId: draft.id,
+        sentMessageId: "gmail-sent-1",
+      }),
+    ).rejects.toBeInstanceOf(OutboundStateError);
+
+    const approved = await prisma.outboundEmail.create({
+      data: {
+        orderId,
+        template: "FILES_VERIFIED",
+        renderedSubject: "Approved subject",
+        renderedBody: "Approved body",
+        status: "APPROVED",
+        approvedById: actorUserId,
+        approvedAt: new Date("2026-07-26T13:00:00.000Z"),
+        idempotencyKey: "verified:approved",
+        gmailThreadId: "gmail-thread-1",
+      },
+    });
+    await expect(claimPendingOutbound(prisma)).resolves.toHaveLength(1);
+    const sent = await markOutboundSent(prisma, {
+      outboundEmailId: approved.id,
+      sentMessageId: "gmail-sent-1",
+    });
+    expect(sent).toMatchObject({ status: "SENT", sentMessageId: "gmail-sent-1" });
+    await expect(
+      markOutboundSent(prisma, {
+        outboundEmailId: approved.id,
+        sentMessageId: "gmail-sent-1",
+      }),
+    ).resolves.toMatchObject({ status: "SENT" });
+    await expect(
+      markOutboundSent(prisma, {
+        outboundEmailId: approved.id,
+        sentMessageId: "another-message",
+      }),
+    ).rejects.toBeInstanceOf(OutboundStateError);
+  });
+
+  it("advances a verified intake from DRAFT to AWAITING_ETA after acknowledgement is sent", async () => {
+    const { orderId } = await createFixtures();
+    await prisma.orderBatch.create({
+      data: {
+        orderId,
+        sequence: 1,
+        kind: "INITIAL",
+        status: "VERIFIED",
+        subfolder: "01_INITIAL",
+        createdById: actorUserId,
+      },
+    });
+    const acknowledgement = await prisma.outboundEmail.create({
+      data: {
+        orderId,
+        template: "ACKNOWLEDGEMENT",
+        renderedSubject: "Approved acknowledgement",
+        renderedBody: "Approved acknowledgement",
+        status: "APPROVED",
+        approvedById: actorUserId,
+        approvedAt: new Date("2026-07-26T13:00:00.000Z"),
+        idempotencyKey: "ack:approved",
+        gmailThreadId: "gmail-thread-1",
+      },
+    });
+    await expect(claimPendingOutbound(prisma)).resolves.toHaveLength(1);
+    await markOutboundSent(prisma, {
+      outboundEmailId: acknowledgement.id,
+      sentMessageId: "gmail-ack-1",
+    });
+
+    await expect(prisma.order.findUniqueOrThrow({ where: { id: orderId } })).resolves.toMatchObject(
+      { status: "AWAITING_ETA" },
+    );
+    await expect(
+      prisma.orderEvent.findMany({
+        where: { orderId, type: "order.status_changed" },
+        orderBy: { occurredAt: "asc" },
+        select: { payload: true },
+      }),
+    ).resolves.toEqual([
+      {
+        payload: expect.objectContaining({
+          from: "DRAFT",
+          to: "ACKNOWLEDGED",
+          reason: "acknowledgement_sent",
+        }),
+      },
+      {
+        payload: expect.objectContaining({
+          from: "ACKNOWLEDGED",
+          to: "AWAITING_ETA",
+          reason: "acknowledgement_sent_after_files_verified",
+        }),
+      },
+    ]);
+
+    const eta = new Date("2026-07-29T09:00:00.000Z");
+    await setEta(prisma, {
+      orderId,
+      eta,
+      actor: { userId: actorUserId, label: "Sifat Sami" },
+      correlationId: "22222222-2222-4222-8222-222222222222",
+      now: new Date("2026-07-26T12:00:00.000Z"),
+    });
+    await expect(
+      prisma.outboundEmail.findUniqueOrThrow({
+        where: { idempotencyKey: `eta:${orderId}:${eta.toISOString()}` },
+      }),
+    ).resolves.toMatchObject({ template: "ETA_NOTICE", status: "DRAFT" });
+  });
+});

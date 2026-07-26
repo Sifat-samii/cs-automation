@@ -33,9 +33,22 @@ apps/web          Next.js CS app and API
 apps/file-agent   Windows worker (not in Phase 0)
 packages/db       Prisma schema and client
 packages/shared   Zod, HMAC, password hashing, later path/state machines
-n8n/workflows     Exported workflows (later)
-docs/             Specs, ADRs, risks, status
+n8n/workflows     Exported Gmail poll/send workflows
+docs/             Specs, ADRs, risks, status, superpowers plans
 ```
+
+## Phase 3 Gmail transport
+
+Machine routes are HMAC only; a session cookie never authorises them:
+
+- `POST /api/ingest/email` — idempotent on Gmail message id
+- `GET /api/outbound/pending` — approved outbound drafts ready to send
+- `POST /api/outbound/:id/sent` — mark sent after n8n delivery
+
+The poll workflow normalises Gmail metadata and posts raw text plus attachment inventory; it does
+not store attachment binaries. The send workflow reads only human-approved rows, preserves
+`gmailThreadId`, and records the provider message id after delivery. Both exports are inactive and
+contain no credentials. Import and activation instructions are in `docs/integrations/n8n-gmail.md`.
 
 ## Path policy
 
