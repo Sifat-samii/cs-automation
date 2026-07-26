@@ -14,19 +14,42 @@ On-prem automation for the Client Support team: Gmail intake, human-approved ord
 
 ## Current status
 
-Phase 0 (project foundation) is in progress on branch `feature/project-foundation`. Application packages are not scaffolded yet. See [docs/implementation-status.md](docs/implementation-status.md).
+Phase 0 (project foundation) is implemented and verified on branch
+`feature/project-foundation`. It includes the npm workspaces monorepo, shared security
+utilities, PostgreSQL schema and append-only audit enforcement, staff-ID authentication,
+protected dashboard shell, CI workflow, and SMB transfer benchmark. The branch is pending
+integration into `develop`.
 
-## First-time setup (after Phase 0 tooling lands)
+See [docs/implementation-status.md](docs/implementation-status.md) for verification results.
+
+## Workspace
+
+- `packages/shared` — environment validation, HMAC helpers, and Argon2id password hashing.
+- `packages/db` — Prisma schema, migrations, seed, client, and test-only database reset helper.
+- `apps/web` — Next.js login and protected dashboard shell.
+
+Order intake, file-agent operations, Gmail integration, AI assistance, and Sheets sync are not
+part of Phase 0.
+
+## First-time setup
 
 ```powershell
 npm ci
-# Copy .env.example to .env and fill in secrets locally — never commit .env
+# Copy .env.example to .env, .env.test, and apps/web/.env.local.
+# Fill in local values and never commit those files.
 npm run db:generate
+
+# Set DATABASE_URL in this shell before Prisma migration or seed commands.
 npm run db:migrate:deploy
 npm run db:seed
+
 npm run verify
 npm run dev --workspace @cs/web
 ```
+
+The bootstrap account signs in with its unique staff ID. The current shared initial password is
+temporary and must be replaced before the app is exposed beyond the trusted office LAN. Passwords
+are stored only as Argon2id hashes.
 
 ## Paths (UNC only)
 
