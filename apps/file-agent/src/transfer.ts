@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import type { FileSystemPort } from "./filesystem.js";
-import { toFileSystemPath } from "./filesystem.js";
 import type { ManifestArtifact } from "./staging.js";
 import {
   asTransferFailure,
@@ -74,8 +73,8 @@ export class RobocopyTreeCopyStrategy implements TreeCopyStrategy {
       const processHandle = spawn(
         "robocopy.exe",
         [
-          toFileSystemPath(source),
-          toFileSystemPath(destination),
+          toRobocopyPath(source),
+          toRobocopyPath(destination),
           "/E",
           "/COPY:DAT",
           "/DCOPY:DAT",
@@ -104,6 +103,18 @@ export class RobocopyTreeCopyStrategy implements TreeCopyStrategy {
       throw new TransientTransferFailure(`Robocopy failed with exit code ${exitCode}`);
     }
   }
+}
+
+export function toRobocopyPath(path: string): string {
+  const normalised = path.replaceAll("/", "\\");
+  const extendedPrefix = "\\\\?\\UNC\\";
+  if (normalised.startsWith(extendedPrefix)) {
+    return `\\\\${normalised.slice(extendedPrefix.length)}`;
+  }
+  if (normalised.startsWith("\\\\") && !normalised.startsWith("\\\\?\\")) {
+    return normalised;
+  }
+  throw new PermanentTransferFailure("Robocopy source and destination must be UNC paths");
 }
 
 function totalManifestBytes(artifacts: readonly ManifestArtifact[]): number {

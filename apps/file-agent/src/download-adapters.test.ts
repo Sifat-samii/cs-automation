@@ -155,6 +155,35 @@ describe("download adapters", () => {
     });
   });
 
+  it("removes an abandoned partial manual copy before retrying", async () => {
+    const adapter = new ManualDropAdapter(fileSystem);
+    await fileSystem.ensureDirectory(fileSystem.resolve("manual", "batch-retry"));
+    await fileSystem.writeStream(
+      fileSystem.resolve("manual", "batch-retry", "complete.tif"),
+      Readable.from("complete"),
+    );
+    await fileSystem.ensureDirectory(
+      fileSystem.resolve("batches", "batch-retry", "download.partial"),
+    );
+    await fileSystem.writeStream(
+      fileSystem.resolve("batches", "batch-retry", "download.partial", "truncated.tif"),
+      Readable.from("x"),
+    );
+
+    const result = await adapter.download({
+      batchId: "batch-retry",
+      stagingRoot: fileSystem.root,
+      manualDropConfirmed: true,
+    });
+
+    expect(result.files).toEqual([
+      expect.objectContaining({ relativePath: "complete.tif", sizeBytes: 8 }),
+    ]);
+    await expect(
+      fileSystem.stat(fileSystem.resolve("batches", "batch-retry", "download.partial")),
+    ).resolves.toBeNull();
+  });
+
   it("permanently directs Google Drive sources to manual drop without credentials", async () => {
     const adapter = new GoogleDriveAdapter();
     await expect(

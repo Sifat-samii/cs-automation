@@ -257,6 +257,7 @@ export class ManualDropAdapter implements DownloadAdapter {
     }
 
     const directory = batchDownloadDirectory(input.stagingRoot, input.batchId);
+    const partial = `${directory}.partial`;
     const existing = await this.fileSystem.stat(directory);
     if (existing) {
       const existingFiles = await this.fileSystem.listFiles(directory);
@@ -270,9 +271,12 @@ export class ManualDropAdapter implements DownloadAdapter {
       await this.fileSystem.remove(directory);
     }
 
+    await this.fileSystem.remove(partial);
     try {
-      await this.fileSystem.copyTree(source, directory);
+      await this.fileSystem.copyTree(source, partial);
+      await this.fileSystem.move(partial, directory);
     } catch (error) {
+      await this.fileSystem.remove(partial);
       throw asTransferFailure(error, "Manual drop copy failed");
     }
     const files = await this.fileSystem.listFiles(directory);

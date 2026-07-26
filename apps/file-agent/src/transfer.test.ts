@@ -6,6 +6,7 @@ import { TempDirectoryFileSystem } from "./filesystem.js";
 import type { ManifestArtifact } from "./staging.js";
 import {
   PortTreeCopyStrategy,
+  toRobocopyPath,
   TransferPublisher,
   type TransferLocation,
   type TreeCopyStrategy,
@@ -155,5 +156,13 @@ describe("backup and production publication", () => {
         ),
       ),
     ).resolves.toBeNull();
+  });
+});
+
+describe("robocopy path compatibility", () => {
+  it("uses normal UNC arguments because Windows robocopy rejects extended UNC syntax", () => {
+    expect(toRobocopyPath("\\\\?\\UNC\\server\\share\\order")).toBe("\\\\server\\share\\order");
+    expect(toRobocopyPath("\\\\server\\share\\order")).toBe("\\\\server\\share\\order");
+    expect(() => toRobocopyPath("D:\\staging")).toThrow(/UNC path/iu);
   });
 });

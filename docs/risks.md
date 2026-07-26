@@ -10,5 +10,6 @@
 | Google Sheets cutover                        | High for go-live    | Production head depends on the sheet until mirror ships.                                                                                                    |
 | Path length (`MAX_PATH`)                     | High for transfers  | Require `\\?\UNC\` and name length caps.                                                                                                                    |
 | Authenticated Dropbox/Drive links            | High for automation | Manual-drop fallback is required in MVP.                                                                                                                    |
+| Robocopy rejects extended UNC syntax         | Medium              | ADR 0006 limits normal UNC to the robocopy process boundary; Node I/O remains extended-length and every copy is checksum-verified.                          |
 | Pixofix API unknown                          | Medium              | Portal orders may stay manual until known.                                                                                                                  |
 | Next.js 16.2 transitive audit findings       | High (upstream)     | Pinned PostCSS/Sharp and ESLint-chain findings have no compatible stable fix; avoid untrusted image/CSS processing and upgrade when upstream releases land. |

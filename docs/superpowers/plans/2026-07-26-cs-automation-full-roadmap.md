@@ -31,16 +31,16 @@ todos:
     status: completed
   - id: p2-gate
     content: "Phase 2 entry gate: run the copy benchmark, provision the UNC service account, decide on Dropbox and Drive credentials"
-    status: pending
+    status: completed
   - id: p2-queue
     content: "Phase 2 Tasks 2.1 to 2.3: leased job queue, HMAC agent API, filesystem port with extended-length paths"
-    status: pending
+    status: completed
   - id: p2-transfer
     content: "Phase 2 Tasks 2.4 to 2.6: download adapters, staging verification and manifest, backup write and production copy"
-    status: pending
+    status: completed
   - id: p2-service
     content: "Phase 2 Tasks 2.7 to 2.9: agent process, Windows service under a share-permitted account, progress UI, end-to-end verification"
-    status: pending
+    status: completed
   - id: p3-gate
     content: "Phase 3 entry gate: install n8n as a service, complete Gmail OAuth, obtain approved email copy"
     status: pending
@@ -388,6 +388,9 @@ Run `npm run verify`. Manually create a client bound to an existing folder, crea
 # Phase 2: Windows File Agent
 
 **Branch:** `feature/file-agent`
+**Status:** complete on the feature branch. Live 2 GiB verification and killed-agent recovery
+passed under the explicitly approved interim `TUDB01\Designer-TUUO` identity. Production service
+activation remains gated on IT provisioning `.\CS_FileAgent` (or an approved domain equivalent).
 **Entry Gate:** all three must hold.
 
 - The copy benchmark has run and `docs/benchmarks/2026-07-26-smb-copy-strategy.md` records whether `Copy-Item` or `robocopy` wins on this hardware.
@@ -472,7 +475,9 @@ Run a real end-to-end transfer of a multi-gigabyte order inside the `_Software T
 - An existing destination folder is never overwritten.
 - A killed agent resumes without duplicating work or losing the batch.
 - Transient and permanent failures are distinguished, and permanent failures stop rather than retry.
-- Every path written is an extended-length UNC path.
+- Every Node filesystem path written is an extended-length UNC path. Robocopy receives validated
+  normal UNC only at its process boundary per ADR 0006 because the deployed Windows robocopy
+  rejects `\\?\UNC\...`; `/256` remains disabled and SHA-256 verification is mandatory.
 
 ---
 

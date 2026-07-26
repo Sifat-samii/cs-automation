@@ -2,13 +2,16 @@
 
 ## Current state
 
-Phases 0 and 1 are complete and merged into `develop`.
+Phases 0 and 1 are complete and merged into `develop`. Phase 2 is complete on
+`feature/file-agent` and awaits review/merge.
 
 - Phase 0: project foundation, security utilities, Prisma authentication/audit schema, protected
   dashboard, CI, and SMB benchmark
 - Phase 1: path and lifecycle contracts, order-domain schema, client registry, transactional order
   services, batch/ETA handling, and the role-protected manual intake UI
-- Quality gate: 18 Vitest files and 147 tests, strict TypeScript, ESLint, Prettier, all package
+- Phase 2: leased queue, HMAC agent API, streaming download/manual-drop adapters, ZIP and manifest
+  verification, atomic backup/production publication, Windows service installer, and progress UI
+- Quality gate: 29 Vitest files and 194 tests, strict TypeScript, ESLint, Prettier, all package
   builds, and the Next.js production build pass
 - Running state: port 3100 returns the login page; protected routing works; an authenticated
   `CS_LEAD` can load the dashboard and new-client page; the live page enumerates `DPBP`, `FN`, and
@@ -20,7 +23,7 @@ Read and follow:
 - `docs/superpowers/plans/2026-07-26-cs-automation-full-roadmap.md`
 - `docs/implementation-status.md`
 - `docs/specs/2026-07-26-cs-automation-design.md`
-- `docs/decisions/` (ADRs 0001–0005)
+- `docs/decisions/` (ADRs 0001–0006)
 
 ## Hard rules
 
@@ -34,11 +37,11 @@ Read and follow:
 
 ## Current branch
 
-`develop`
+`feature/file-agent`
 
 ## Next step
 
-Evaluate the Phase 2 entry gate. The SMB benchmark is complete. Before creating
-`feature/file-agent`, verify a Windows service account has read/write access to the approved
-`_Software Test` roots and record the Dropbox/Google Drive credential decision. Do not treat
-interactive host-account read access as proof of service-account write access.
+Review and merge Phase 2 into `develop`, then evaluate the Phase 3 entry gate. Before production
+service activation, IT must replace the approved interim `TUDB01\Designer-TUUO` identity with the
+dedicated `.\CS_FileAgent` account (or approved domain equivalent). Do not install the service as
+LocalSystem.

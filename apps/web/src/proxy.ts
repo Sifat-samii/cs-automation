@@ -1,10 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login"];
+const MACHINE_PATHS = ["/api/agent/"];
 
 export function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
-  if (PUBLIC_PATHS.some((path) => pathname.startsWith(path))) return NextResponse.next();
+  if (
+    PUBLIC_PATHS.some((path) => pathname.startsWith(path)) ||
+    MACHINE_PATHS.some((path) => pathname.startsWith(path))
+  ) {
+    return NextResponse.next();
+  }
 
   const cookieName = process.env.SESSION_COOKIE_NAME ?? "cs_session";
   if (!request.cookies.has(cookieName)) {

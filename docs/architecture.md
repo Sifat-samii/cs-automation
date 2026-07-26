@@ -45,3 +45,7 @@ The Phase 2 copy strategy is robocopy followed by full manifest verification. Pu
 operator-confirmed manual-drop sources are enabled. Authenticated Google Drive sources are a
 permanent failure directing the operator to manual drop until credentials are deliberately
 provisioned.
+
+Node filesystem operations use extended-length UNC paths. ADR 0006 documents the one compatibility
+boundary: the deployed robocopy rejects `\\?\UNC\...`, so its validated arguments are normal UNC
+with native long-path behavior enabled, followed by mandatory SHA-256 verification.
