@@ -82,11 +82,15 @@ describe("createOrder", () => {
     expect(order.backupPath).toBe(`${env.BACKUP_ROOT_UNC}\\Verily\\VRLY_260726_001__untitled`);
   });
 
-  it("rejects an over-budget title before any transactional row is retained", async () => {
+  it("rejects an over-budget destination before any transactional row is retained", async () => {
     const { clientId } = await createFixtures();
+    const overBudgetRoot = `\\\\ci-host\\Production\\${"r".repeat(90)}`;
 
     await expect(
-      createOrder(prisma, orderInput(clientId, "overlong ".repeat(100))),
+      createOrder(prisma, {
+        ...orderInput(clientId, "overlong ".repeat(100)),
+        backupRoot: overBudgetRoot,
+      }),
     ).rejects.toThrow(PathBudgetError);
     await expect(prisma.order.count()).resolves.toBe(0);
     await expect(prisma.orderBatch.count()).resolves.toBe(0);
