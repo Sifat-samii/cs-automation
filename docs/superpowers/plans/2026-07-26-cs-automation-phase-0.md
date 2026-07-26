@@ -974,6 +974,11 @@ CREATE DATABASE cs_automation_test OWNER cs_app;
 psql -U postgres -f scripts/setup-database.sql
 ```
 
+Local provisioning deviation approved during execution: this machine already has the non-superuser
+application role `"TUUO_CS"` and development database `cs_webapp`. The isolated test database is
+`cs_webapp_test`, also owned by `"TUUO_CS"`. Local ignored environment files carry those URLs;
+`scripts/setup-database.sql` records only the remaining test-database creation.
+
 - [ ] **Step 2: Create the package and install Prisma**
 
 ```json
@@ -1012,13 +1017,18 @@ npm install -D prisma --workspace @cs/db
 // packages/db/tsconfig.json
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "rootDir": "./src", "outDir": "./dist" },
+  "compilerOptions": { "rootDir": "./src", "outDir": "./dist", "types": ["node"] },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts", "prisma/**"]
 }
 ```
 
 `prisma/seed.ts` is excluded from the build because Node runs it directly with native type stripping. It is therefore not type-checked; keep it small and free of logic worth testing.
+
+The implementation pins Prisma 6.x because this plan uses the Prisma 6 `datasource.url` and
+`prisma-client-js` configuration. Prisma 7 requires a separate configuration and adapter migration
+that is outside this phase. As with `packages/shared`, TypeScript 6 needs explicit Node declarations
+for this composite package.
 
 - [ ] **Step 3: Write `schema.prisma`**
 
