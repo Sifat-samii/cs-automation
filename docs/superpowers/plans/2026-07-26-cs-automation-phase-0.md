@@ -284,6 +284,10 @@ workspace before Task 6 creates it.
 npm install -D typescript @types/node vitest eslint @eslint/js typescript-eslint prettier dotenv npm-run-all2
 ```
 
+Pin `eslint` and `@eslint/js` to major 9 while Next.js 16 is present. Its bundled React plugin is
+not compatible with ESLint 10 (`contextOrFilename.getFilename is not a function`); the pin changes
+no lint rules or strictness.
+
 - [ ] **Step 3: Create `tsconfig.base.json`**
 
 ```json
@@ -1339,6 +1343,16 @@ Accept the defaults for anything prompted. Then set `"name": "@cs/web"` in `apps
 ```powershell
 npm install @cs/db @cs/shared --workspace @cs/web
 ```
+
+The Next.js 16.2 scaffold imports Google-hosted Geist fonts by default, making every clean build
+depend on an external request. Remove those default remote-font imports and retain a local system
+font stack so `npm run verify` and CI builds are deterministic offline.
+
+As of the implementation date, `npm audit` also reports upstream high-severity findings in the
+PostCSS and optional Sharp versions pinned by Next.js 16.2.12, plus the ESLint 9 dependency chain.
+The suggested forced fix incorrectly downgrades Next to 9.3.3, so do not apply it. Track the risk,
+avoid untrusted image/CSS processing in this phase, and upgrade when compatible upstream releases
+are available.
 
 Within `apps/web`, follow the Next.js import convention: no `.js` extensions on relative imports, and the `@/` alias for anything outside the current folder. Only `packages/shared` and `packages/db` use explicit `.js` extensions, because those compile under `moduleResolution: NodeNext`.
 
