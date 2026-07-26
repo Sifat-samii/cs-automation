@@ -1,10 +1,10 @@
 import type { UserRole } from "@cs/db";
 
-export type Permission = "user:manage" | "audit:read";
+export type Permission = "user:manage" | "audit:read" | "client:manage" | "order:write";
 
 const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
-  CS_EXECUTIVE: [],
-  CS_LEAD: ["user:manage", "audit:read"],
+  CS_EXECUTIVE: ["order:write"],
+  CS_LEAD: ["user:manage", "audit:read", "client:manage", "order:write"],
 };
 
 export class ForbiddenError extends Error {
