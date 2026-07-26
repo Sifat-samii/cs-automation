@@ -53,6 +53,32 @@ enum SourceLinkKind {
   OTHER
 }
 
+enum TransferJobKind {
+  DOWNLOAD
+  STAGE_VERIFY
+  WRITE_BACKUP
+  COPY_PRODUCTION
+  VERIFY_PRODUCTION
+}
+
+enum TransferJobStatus {
+  QUEUED
+  LEASED
+  SUCCEEDED
+  FAILED
+}
+
+enum TransferErrorClass {
+  TRANSIENT
+  PERMANENT
+}
+
+enum FileArtifactStage {
+  STAGED
+  BACKUP
+  PRODUCTION
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   loginId      String   @unique
@@ -150,20 +176,24 @@ model Order {
 }
 
 model OrderBatch {
-  id            String           @id @default(uuid()) @db.Uuid
-  orderId       String           @db.Uuid
-  order         Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  sequence      Int
-  kind          OrderBatchKind
-  status        OrderBatchStatus @default(PENDING)
-  subfolder     String
-  notes         String?
-  failureReason String?
-  createdById   String           @db.Uuid
-  createdAt     DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime         @updatedAt @db.Timestamptz(6)
+  id                       String           @id @default(uuid()) @db.Uuid
+  orderId                  String           @db.Uuid
+  order                    Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sequence                 Int
+  kind                     OrderBatchKind
+  status                   OrderBatchStatus @default(PENDING)
+  subfolder                String
+  notes                    String?
+  failureReason            String?
+  manualDropConfirmedAt    DateTime?        @db.Timestamptz(6)
+  manualDropConfirmedById  String?          @db.Uuid
+  createdById              String           @db.Uuid
+  createdAt                DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime         @updatedAt @db.Timestamptz(6)
 
   sourceLinks SourceLink[]
+  transferJobs TransferJob[]
+  fileArtifacts FileArtifact[]
 
   @@unique([orderId, sequence])
   @@index([status])
@@ -195,4 +225,40 @@ model OrderEvent {
   occurredAt    DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([orderId, occurredAt])
+}
+
+model TransferJob {
+  id             String             @id @default(uuid()) @db.Uuid
+  batchId        String             @db.Uuid
+  batch          OrderBatch         @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  kind           TransferJobKind
+  status         TransferJobStatus  @default(QUEUED)
+  attempts       Int                @default(0)
+  maxAttempts    Int                @default(3)
+  leaseOwner     String?
+  leaseExpiresAt DateTime?          @db.Timestamptz(6)
+  lastError      String?
+  errorClass     TransferErrorClass?
+  bytesTotal     BigInt             @default(0)
+  bytesDone      BigInt             @default(0)
+  correlationId  String             @db.Uuid
+  createdAt      DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @db.Timestamptz(6)
+
+  @@unique([batchId, kind])
+  @@index([status, leaseExpiresAt, createdAt])
+}
+
+model FileArtifact {
+  id           String            @id @default(uuid()) @db.Uuid
+  batchId      String            @db.Uuid
+  batch        OrderBatch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  relativePath String
+  sizeBytes    BigInt
+  sha256       String
+  stage        FileArtifactStage
+  createdAt    DateTime          @default(now()) @db.Timestamptz(6)
+
+  @@unique([batchId, stage, relativePath])
+  @@index([batchId, stage])
 }
