@@ -38,7 +38,7 @@ function OutboundDraft({ orderId, outbound }: { orderId: string; outbound: Outbo
         </span>
       </div>
       <pre className="mt-4 whitespace-pre-wrap rounded-lg bg-slate-50 p-3 font-sans text-sm text-slate-700">
-        {outbound.renderedBody}
+        {outbound.renderedBody.replaceAll("<br>", "\n")}
       </pre>
       {gateBlocked && (
         <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">

@@ -60,8 +60,9 @@ in dependency order.
 1. Commit and merge Phase 2 review hardening into `develop` (CI green).
 2. Split or rebase the verified Phase 3 implementation onto `feature/gmail-integration` from the
    updated `develop` without losing the current dirty-tree work.
-3. Install n8n as a Windows service, complete shared-mailbox Gmail OAuth, and paste owner-approved
-   wording for `ACKNOWLEDGEMENT`, `FILES_VERIFIED`, and `ETA_NOTICE`.
+3. Install n8n as a Windows service and complete Gmail OAuth (work mailbox for local dry-run;
+   shared mailbox for production). Pilot-approved outbound copy is already in
+   `apps/web/src/lib/outbound/templates.ts`.
 4. Follow `docs/integrations/n8n-gmail.md` for manual dry-run verification before activating either
    workflow.
 5. Before production File Agent activation, IT must replace the interim `TUDB01\Designer-TUUO`

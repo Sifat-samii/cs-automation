@@ -3,26 +3,41 @@
   "nodes": [
     {
       "parameters": {
-        "pollTimes": {
-          "item": [
+        "rule": {
+          "interval": [
             {
-              "mode": "everyMinute"
+              "field": "minutes",
+              "minutesInterval": 1
             }
           ]
-        },
+        }
+      },
+      "id": "a1b2c3d4-e5f6-4789-a012-3456789abcde",
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 25,
         "simple": false,
         "filters": {
-          "readStatus": "unread"
+          "readStatus": "both",
+          "q": "newer_than:2d -category:promotions -category:social"
         },
         "options": {
           "downloadAttachments": false
         }
       },
       "id": "9e821dda-64b7-4d25-8740-2be8282ece88",
-      "name": "Shared Gmail Trigger",
-      "type": "n8n-nodes-base.gmailTrigger",
-      "typeVersion": 1.3,
-      "position": [0, 0],
+      "name": "Get Recent Gmail Messages",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [240, 0],
       "credentials": {
         "gmailOAuth2": {
           "name": "SHARED_CS_GMAIL_OAUTH"
@@ -31,13 +46,13 @@
     },
     {
       "parameters": {
-        "jsCode": "const { createHmac } = require('crypto');\nconst item = $input.item.json;\nconst rawHeaders = Array.isArray(item.payload?.headers) ? item.payload.headers : Array.isArray(item.headers) ? item.headers : [];\nconst parsedHeaders = Object.fromEntries(rawHeaders.map((header) => [String(header.name).toLowerCase(), header.value]));\nconst objectHeaders = item.headers && !Array.isArray(item.headers) ? item.headers : {};\nconst headers = { ...parsedHeaders, ...objectHeaders };\nconst address = (value) => String(value ?? '').match(/<([^>]+)>/)?.[1] ?? String(value ?? '');\nconst decodeBase64Url = (value) => {\n  const normalized = String(value).replace(/-/g, '+').replace(/_/g, '/');\n  return Buffer.from(normalized, 'base64').toString('utf8');\n};\nconst textParts = [];\nconst mimeAttachments = [];\nconst visitPart = (part) => {\n  if (!part || typeof part !== 'object') return;\n  if (part.filename) {\n    mimeAttachments.push({\n      filename: String(part.filename),\n      ...(part.mimeType ? { mimeType: String(part.mimeType) } : {}),\n      ...(Number.isSafeInteger(Number(part.body?.size)) ? { sizeBytes: Number(part.body.size) } : {}),\n    });\n  }\n  if (part.mimeType === 'text/plain' && part.body?.data) textParts.push(decodeBase64Url(part.body.data));\n  for (const child of Array.isArray(part.parts) ? part.parts : []) visitPart(child);\n};\nvisitPart(item.payload);\nconst fallbackAttachments = Array.isArray(item.attachments) ? item.attachments : [];\nconst attachmentSource = mimeAttachments.length > 0 ? mimeAttachments : fallbackAttachments;\nconst payload = {\n  gmailMessageId: String(item.id ?? item.messageId),\n  gmailThreadId: String(item.threadId),\n  fromAddress: address(item.from ?? headers.from).trim().toLowerCase(),\n  toAddresses: String(item.to ?? headers.to ?? '').split(',').map(address).map((value) => value.trim().toLowerCase()).filter(Boolean),\n  subject: String(item.subject ?? headers.subject ?? ''),\n  bodyText: String(item.textPlain ?? item.text ?? (textParts.length > 0 ? textParts.join('\\n') : item.snippet) ?? ''),\n  receivedAt: new Date(Number(item.internalDate ?? Date.now())).toISOString(),\n  attachments: attachmentSource.map((attachment) => ({\n    filename: String(attachment.filename ?? attachment.name),\n    ...(attachment.mimeType ? { mimeType: String(attachment.mimeType) } : {}),\n    ...(Number.isSafeInteger(Number(attachment.sizeBytes ?? attachment.size)) ? { sizeBytes: Number(attachment.sizeBytes ?? attachment.size) } : {}),\n  })),\n};\nconst body = JSON.stringify(payload);\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = createHmac('sha256', $env.INGEST_HMAC_SECRET).update(`${timestamp}.${body}`, 'utf8').digest('hex');\nreturn [{ json: { body, timestamp, signature, gmailMessageId: payload.gmailMessageId } }];"
+        "jsCode": "const { createHmac } = require('crypto');\nconst item = $input.item.json;\nconst rawHeaders = Array.isArray(item.payload?.headers) ? item.payload.headers : Array.isArray(item.headers) ? item.headers : [];\nconst parsedHeaders = Object.fromEntries(\n  rawHeaders.map((header) => {\n    if (header && typeof header === 'object' && 'name' in header) {\n      return [String(header.name).toLowerCase(), header.value];\n    }\n    return [null, null];\n  }).filter((entry) => entry[0]),\n);\nconst objectHeaders = item.headers && !Array.isArray(item.headers) ? item.headers : {};\nconst headers = { ...parsedHeaders, ...objectHeaders };\nconst address = (value) => {\n  if (value == null || value === '') return '';\n  if (typeof value === 'string') return value.match(/<([^>]+)>/)?.[1] ?? value;\n  if (typeof value === 'object') {\n    if (typeof value.text === 'string' && value.text) return value.text.match(/<([^>]+)>/)?.[1] ?? value.text;\n    if (typeof value.address === 'string' && value.address) return value.address;\n    if (typeof value.value === 'string' && value.value) return value.value.match(/<([^>]+)>/)?.[1] ?? value.value;\n    if (Array.isArray(value.value) && value.value[0]) {\n      const first = value.value[0];\n      if (typeof first === 'string') return first.match(/<([^>]+)>/)?.[1] ?? first;\n      if (first?.address) return String(first.address);\n      if (first?.text) return String(first.text).match(/<([^>]+)>/)?.[1] ?? String(first.text);\n    }\n  }\n  return '';\n};\nconst decodeBase64Url = (value) => {\n  const normalized = String(value).replace(/-/g, '+').replace(/_/g, '/');\n  return Buffer.from(normalized, 'base64').toString('utf8');\n};\nconst textParts = [];\nconst mimeAttachments = [];\nconst visitPart = (part) => {\n  if (!part || typeof part !== 'object') return;\n  if (part.filename) {\n    mimeAttachments.push({\n      filename: String(part.filename),\n      ...(part.mimeType ? { mimeType: String(part.mimeType) } : {}),\n      ...(Number.isSafeInteger(Number(part.body?.size)) ? { sizeBytes: Number(part.body.size) } : {}),\n    });\n  }\n  if (part.mimeType === 'text/plain' && part.body?.data) textParts.push(decodeBase64Url(part.body.data));\n  for (const child of Array.isArray(part.parts) ? part.parts : []) visitPart(child);\n};\nvisitPart(item.payload);\nconst fallbackAttachments = Array.isArray(item.attachments) ? item.attachments : [];\nconst attachmentSource = mimeAttachments.length > 0 ? mimeAttachments : fallbackAttachments;\nconst rawTo = item.to ?? headers.to ?? headers['delivered-to'] ?? headers['Delivered-To'] ?? '';\nconst toList = Array.isArray(rawTo)\n  ? rawTo\n  : typeof rawTo === 'object' && Array.isArray(rawTo.value)\n    ? rawTo.value\n    : String(typeof rawTo === 'object' ? (rawTo.text ?? '') : rawTo).split(',');\nconst receivedMs = item.internalDate != null && item.internalDate !== ''\n  ? Number(item.internalDate)\n  : item.date\n    ? Date.parse(String(item.date))\n    : Date.now();\nconst payload = {\n  gmailMessageId: String(item.id ?? item.messageId),\n  gmailThreadId: String(item.threadId),\n  fromAddress: address(item.from ?? headers.from ?? headers.From).trim().toLowerCase(),\n  toAddresses: toList.map(address).map((value) => value.trim().toLowerCase()).filter(Boolean),\n  subject: String(item.subject ?? headers.subject ?? headers.Subject ?? ''),\n  bodyText: String(\n    item.textPlain ??\n    item.text ??\n    (textParts.length > 0 ? textParts.join('\\n') : undefined) ??\n    item.snippet ??\n    '',\n  ),\n  receivedAt: new Date(Number.isFinite(receivedMs) ? receivedMs : Date.now()).toISOString(),\n  attachments: attachmentSource.map((attachment) => ({\n    filename: String(attachment.filename ?? attachment.name),\n    ...(attachment.mimeType || attachment.contentType\n      ? { mimeType: String(attachment.mimeType ?? attachment.contentType) }\n      : {}),\n    ...(Number.isSafeInteger(Number(attachment.sizeBytes ?? attachment.size))\n      ? { sizeBytes: Number(attachment.sizeBytes ?? attachment.size) }\n      : {}),\n  })),\n};\nif (!payload.gmailMessageId || payload.gmailMessageId === 'undefined') {\n  throw new Error('Gmail message is missing id');\n}\nif (!payload.gmailThreadId || payload.gmailThreadId === 'undefined') {\n  throw new Error('Gmail message is missing threadId');\n}\nif (!payload.fromAddress) {\n  throw new Error('Gmail message is missing fromAddress');\n}\nconst body = JSON.stringify(payload);\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = createHmac('sha256', $env.INGEST_HMAC_SECRET).update(`${timestamp}.${body}`, 'utf8').digest('hex');\nreturn [{ json: { body, timestamp, signature, gmailMessageId: payload.gmailMessageId } }];"
       },
       "id": "f6d63ba5-f6d9-4125-bc2f-bf256bb8c44d",
       "name": "Normalize and Sign Ingest",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [260, 0]
+      "position": [500, 0]
     },
     {
       "parameters": {
@@ -81,39 +96,26 @@
       "name": "POST HMAC Ingest",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [540, 0]
+      "position": [760, 0]
     }
   ],
   "pinData": {},
   "connections": {
-    "Shared Gmail Trigger": {
-      "main": [
-        [
-          {
-            "node": "Normalize and Sign Ingest",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Every Minute": {
+      "main": [[{ "node": "Get Recent Gmail Messages", "type": "main", "index": 0 }]]
+    },
+    "Get Recent Gmail Messages": {
+      "main": [[{ "node": "Normalize and Sign Ingest", "type": "main", "index": 0 }]]
     },
     "Normalize and Sign Ingest": {
-      "main": [
-        [
-          {
-            "node": "POST HMAC Ingest",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "POST HMAC Ingest", "type": "main", "index": 0 }]]
     }
   },
   "active": false,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "4896cfdf-90ad-4ccc-b42c-afc276e0bbcf",
+  "versionId": "7c4e9f1a-2b3c-4d5e-8f90-a1b2c3d4e5f6",
   "meta": {
     "templateCredsSetupCompleted": false
   },
