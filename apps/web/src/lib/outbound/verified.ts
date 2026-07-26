@@ -1,7 +1,7 @@
 import type { DbClient } from "@cs/db";
 import { assertOrderTransition } from "@cs/shared";
 import { recordAudit } from "@/lib/audit";
-import { draftOutboundEmail } from "@/lib/outbound/service";
+import { draftAndSystemApproveOutbound, draftOutboundEmail } from "@/lib/outbound/service";
 
 export async function handleBatchVerified(
   db: DbClient,
@@ -9,7 +9,7 @@ export async function handleBatchVerified(
 ) {
   const batch = await db.orderBatch.findUnique({
     where: { id: input.batchId },
-    include: { order: true },
+    include: { order: { include: { client: true } } },
   });
   if (!batch) throw new Error("Verified outbound hook batch does not exist");
   if (batch.status !== "VERIFIED") {
@@ -19,12 +19,24 @@ export async function handleBatchVerified(
     return { outboundEmailId: null, transitionedToAwaitingEta: false };
   }
 
-  const outbound = await draftOutboundEmail(db, {
+  const etaNote = batch.order.eta
+    ? `Current ETA: ${batch.order.eta.toISOString()}.`
+    : (batch.order.etaNote ?? "");
+
+  const outbound = await draftAndSystemApproveOutbound(db, {
     orderId: batch.orderId,
     template: "FILES_VERIFIED",
     idempotencyKey: `files-verified:${batch.id}`,
     gmailThreadId: batch.order.gmailThreadId,
+    context: {
+      orderCode: batch.order.code,
+      clientDisplayName: batch.order.client.displayName,
+      title: batch.order.title,
+      ...(batch.order.eta ? { eta: batch.order.eta.toISOString() } : {}),
+      ...(etaNote ? { etaNote } : {}),
+    },
   });
+
   let transitionedToAwaitingEta = false;
   if (!batch.order.eta && batch.order.status === "ACKNOWLEDGED") {
     assertOrderTransition(batch.order.status, "AWAITING_ETA");
@@ -32,38 +44,37 @@ export async function handleBatchVerified(
       where: { id: batch.orderId, status: "ACKNOWLEDGED", eta: null },
       data: { status: "AWAITING_ETA" },
     });
-    if (updated.count !== 1) {
-      throw new Error("Order changed concurrently during files-verified follow-up");
-    }
-    transitionedToAwaitingEta = true;
-    await db.orderEvent.create({
-      data: {
-        orderId: batch.orderId,
-        batchId: batch.id,
-        type: "order.status_changed",
-        payload: {
+    if (updated.count === 1) {
+      transitionedToAwaitingEta = true;
+      await db.orderEvent.create({
+        data: {
+          orderId: batch.orderId,
+          batchId: batch.id,
+          type: "order.status_changed",
+          payload: {
+            from: "ACKNOWLEDGED",
+            to: "AWAITING_ETA",
+            reason: "files_verified_without_eta",
+          },
+          actorLabel: "File Agent",
+          correlationId: input.correlationId,
+        },
+      });
+      await recordAudit(db, {
+        correlationId: input.correlationId,
+        actorUserId: null,
+        actorLabel: "File Agent",
+        action: "order.status_changed",
+        entityType: "Order",
+        entityId: batch.orderId,
+        metadata: {
           from: "ACKNOWLEDGED",
           to: "AWAITING_ETA",
           reason: "files_verified_without_eta",
+          batchId: batch.id,
         },
-        actorLabel: "File Agent",
-        correlationId: input.correlationId,
-      },
-    });
-    await recordAudit(db, {
-      correlationId: input.correlationId,
-      actorUserId: null,
-      actorLabel: "File Agent",
-      action: "order.status_changed",
-      entityType: "Order",
-      entityId: batch.orderId,
-      metadata: {
-        from: "ACKNOWLEDGED",
-        to: "AWAITING_ETA",
-        reason: "files_verified_without_eta",
-        batchId: batch.id,
-      },
-    });
+      });
+    }
   }
 
   return { outboundEmailId: outbound.id, transitionedToAwaitingEta };
@@ -78,15 +89,9 @@ export async function draftEtaNoticeAfterSetEta(
   },
 ) {
   if (input.previousStatus !== "AWAITING_ETA") return null;
-  const order = await db.order.findUnique({
-    where: { id: input.orderId },
-    select: { gmailThreadId: true },
-  });
-  if (!order?.gmailThreadId) return null;
   return draftOutboundEmail(db, {
     orderId: input.orderId,
     template: "ETA_NOTICE",
     idempotencyKey: `eta:${input.orderId}:${input.eta.toISOString()}`,
-    gmailThreadId: order.gmailThreadId,
   });
 }

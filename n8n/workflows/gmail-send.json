@@ -73,9 +73,10 @@
       "parameters": {
         "sendTo": "={{ $json.toAddress }}",
         "subject": "={{ $json.renderedSubject }}",
-        "emailType": "text",
+        "emailType": "html",
         "message": "={{ $json.renderedBody }}",
         "options": {
+          "appendAttribution": false,
           "threadId": "={{ $json.gmailThreadId }}"
         }
       },

@@ -6,24 +6,21 @@
   `TUDB01\Designer-TUUO` is approved only as the temporary Phase 2 pilot identity.
 - **Phase 3 entry gate:** n8n installed as a Windows service on the CS box.
 - **Phase 3 entry gate:** Gmail OAuth completed for the shared CS mailbox.
-- **Phase 3 entry gate:** approved exact wording for outbound templates
-  `ACKNOWLEDGEMENT`, `FILES_VERIFIED`, and `ETA_NOTICE` (paste into
-  `docs/superpowers/plans/2026-07-26-cs-automation-phase-3.md`; do not invent copy).
+- **Phase 3 entry gate:** final brand/legal wording may later replace the current pilot-approved
+  outbound templates in `apps/web/src/lib/outbound/templates.ts` and the Phase 3 plan.
 
-### Phase 3 gate audit — 2026-07-26
+### Phase 3 gate audit — 2026-07-26 (updated)
 
-- **Gate 0 — blocked:** verified Phase 2 head `1207d01` is not an ancestor of local `develop`
-  (`63802b7`); Phase 2 remains on `feature/file-agent` / `docs/phase-3-plan`.
-- **Gate 1 — blocked:** no Windows service with an n8n service name or display name is
-  registered on this host.
-- **Gate 2 — blocked:** shared-mailbox Gmail OAuth completion is not evidenced in the repository
-  or configured environment and remains explicitly unresolved.
-- **Gate 3 — blocked:** the Phase 3 plan still contains `GATE_BLOCKED_PLACEHOLDER` for the subject
-  and body of all three outbound templates.
-- **Required next action:** merge the Phase 2 review-hardened branch into `develop`, install and
-  verify n8n as a Windows service, complete shared-mailbox Gmail OAuth, and paste owner-approved
-  wording into the Phase 3 plan. Re-run this gate audit before creating
-  `feature/gmail-integration` or implementing Tasks 3.1–3.10.
+- **Gate 0 — cleared:** Phase 2/3 work merged into `develop` (PR #3, merge commit `548fb59`).
+- **Gate 1 — blocked:** n8n is not yet installed/registered as a Windows service on this host.
+- **Gate 2 — blocked:** shared-mailbox Gmail OAuth completion is not evidenced; work-mailbox
+  dry-run is permitted for local pilot only.
+- **Gate 3 — cleared (pilot):** pilot-approved local copy for `ACKNOWLEDGEMENT`,
+  `FILES_VERIFIED`, and `ETA_NOTICE` is recorded in the Phase 3 plan and
+  `apps/web/src/lib/outbound/templates.ts`. Final brand/legal copy remains optional follow-up.
+- **Required next action:** install and verify n8n as a Windows service, complete Gmail OAuth
+  (work mailbox for dry-run; shared mailbox for production), import and dry-run both workflows
+  per `docs/integrations/n8n-gmail.md`, then activate only after successful dry-run.
 
 - Pixofix portal API / webhook availability.
 - Whether authenticated Dropbox/Google Drive automation will be added after the credential-free

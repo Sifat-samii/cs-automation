@@ -6,6 +6,7 @@ import {
   type ExtractEmailInput,
 } from "@/lib/ingest/extract";
 import { buildRuleProposal } from "@/lib/ingest/rules";
+import { draftAndSystemApproveOutbound } from "@/lib/outbound/service";
 
 const attachmentSchema = z.object({
   filename: z.string().trim().min(1).max(500),
@@ -30,6 +31,7 @@ export type IngestEmailResult = {
   emailMessageId: string;
   proposalId: string;
   duplicate: boolean;
+  receiptOutboundEmailId: string | null;
 };
 
 function isGmailMessageCollision(error: unknown): boolean {
@@ -40,6 +42,11 @@ function isGmailMessageCollision(error: unknown): boolean {
   return Array.isArray(target)
     ? target.some((field) => field === "gmailMessageId")
     : String(target).includes("gmailMessageId");
+}
+
+function displayNameFromAddress(fromAddress: string): string {
+  const local = fromAddress.split("@")[0]?.trim();
+  return local && local.length > 0 ? local : "there";
 }
 
 async function existingResult(
@@ -54,9 +61,17 @@ async function existingResult(
     },
   });
   const proposalId = existing?.proposals[0]?.id;
-  return existing && proposalId
-    ? { emailMessageId: existing.id, proposalId, duplicate: true }
-    : null;
+  if (!existing || !proposalId) return null;
+  const receipt = await db.outboundEmail.findUnique({
+    where: { idempotencyKey: `receipt-ack:${gmailMessageId}` },
+    select: { id: true },
+  });
+  return {
+    emailMessageId: existing.id,
+    proposalId,
+    duplicate: true,
+    receiptOutboundEmailId: receipt?.id ?? null,
+  };
 }
 
 export async function ingestEmail(
@@ -104,11 +119,32 @@ export async function ingestEmail(
         select: {
           id: true,
           proposals: { select: { id: true } },
+          client: { select: { displayName: true } },
         },
       });
       const proposalId = message.proposals[0]?.id;
       if (!proposalId) throw new Error("Email proposal was not created");
-      return { emailMessageId: message.id, proposalId, duplicate: false };
+
+      const title = input.subject.trim() || "your request";
+      const clientDisplayName =
+        message.client?.displayName ?? displayNameFromAddress(input.fromAddress);
+      const receipt = await draftAndSystemApproveOutbound(transaction, {
+        template: "RECEIPT_ACKNOWLEDGEMENT",
+        idempotencyKey: `receipt-ack:${input.gmailMessageId}`,
+        gmailThreadId: input.gmailThreadId,
+        emailMessageId: message.id,
+        context: {
+          clientDisplayName,
+          title,
+        },
+      });
+
+      return {
+        emailMessageId: message.id,
+        proposalId,
+        duplicate: false,
+        receiptOutboundEmailId: receipt.id,
+      };
     });
   } catch (error) {
     if (isGmailMessageCollision(error)) {

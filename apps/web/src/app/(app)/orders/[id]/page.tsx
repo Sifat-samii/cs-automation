@@ -113,7 +113,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         <div>
           <h2 className="text-lg font-bold text-slate-950">Outbound email</h2>
           <p className="text-sm text-slate-600">
-            Drafts require recorded human approval before the Gmail transport can see them.
+            Drafts require recorded approval before Gmail transport can send them. Receipt and
+            files-verified confirmations may be system-approved automatically.
           </p>
         </div>
         <OutboundEmailList

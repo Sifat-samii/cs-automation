@@ -9,7 +9,6 @@ import {
   type OrderMutationActor,
   type SourceLinkInput,
 } from "@/lib/orders/create";
-import { draftOutboundEmail } from "@/lib/outbound/service";
 
 const proposalPayloadSchema = z.object({
   clientId: z.uuid().nullable(),
@@ -30,6 +29,8 @@ export type ProposalApprovalOverrides = {
   orderType?: string;
   quantity?: number;
   batchKind?: "ADDITIONAL" | "SAMPLE" | "CORRECTION";
+  downloadUrl?: string;
+  eta?: Date;
 };
 
 export type ApproveProposalInput = {
@@ -50,7 +51,30 @@ type ApprovalDependencies = {
   queueTransfer?: typeof queueBatchTransfer;
 };
 
-function sourceLinksFromPayload(payload: z.infer<typeof proposalPayloadSchema>): SourceLinkInput[] {
+function classifyDownloadUrl(url: string): SourceLinkInput {
+  const host = new URL(url).hostname.toLowerCase();
+  if (host.includes("dropbox.com") || host.includes("dropboxusercontent.com")) {
+    return { kind: "DROPBOX", url };
+  }
+  if (host.includes("drive.google.com") || host.includes("docs.google.com")) {
+    return { kind: "GDRIVE", url };
+  }
+  return { kind: "DROPBOX", url };
+}
+
+function sourceLinksFromPayload(
+  payload: z.infer<typeof proposalPayloadSchema>,
+  downloadUrl?: string,
+): SourceLinkInput[] {
+  if (downloadUrl) {
+    return [
+      classifyDownloadUrl(downloadUrl),
+      ...payload.attachmentNames.map((localHint) => ({
+        kind: "ATTACHMENT" as const,
+        localHint,
+      })),
+    ];
+  }
   return [
     ...payload.dropboxUrls.map((url) => ({ kind: "DROPBOX" as const, url })),
     ...payload.driveUrls.map((url) => ({ kind: "GDRIVE" as const, url })),
@@ -81,21 +105,15 @@ async function acceptedResult(
   if (!message.orderId) {
     return { orderId: null, batchId: null, outboundEmailId: null };
   }
-  const [batch, outbound] = await Promise.all([
-    db.orderBatch.findFirst({
-      where: { orderId: message.orderId },
-      orderBy: { sequence: "desc" },
-      select: { id: true },
-    }),
-    db.outboundEmail.findUnique({
-      where: { idempotencyKey: `ack:${message.orderId}:${message.id}` },
-      select: { id: true },
-    }),
-  ]);
+  const batch = await db.orderBatch.findFirst({
+    where: { orderId: message.orderId },
+    orderBy: { sequence: "desc" },
+    select: { id: true },
+  });
   return {
     orderId: message.orderId,
     batchId: batch?.id ?? null,
-    outboundEmailId: outbound?.id ?? null,
+    outboundEmailId: null,
   };
 }
 
@@ -135,7 +153,7 @@ export async function approveProposal(
     if (kind === "NO_ACTION" || kind === "NEEDS_HUMAN") {
       throw new Error("Proposal requires reviewer edits or an explicit ignore decision");
     }
-    const sources = sourceLinksFromPayload(payload);
+    const sources = sourceLinksFromPayload(payload, input.overrides?.downloadUrl);
     let orderId: string;
     let batchId: string | null = null;
 
@@ -160,7 +178,10 @@ export async function approveProposal(
       });
       await transaction.order.update({
         where: { id: order.id },
-        data: { gmailThreadId: proposal.emailMessage.gmailThreadId },
+        data: {
+          gmailThreadId: proposal.emailMessage.gmailThreadId,
+          ...(input.overrides?.eta ? { eta: input.overrides.eta } : {}),
+        },
       });
       const initialBatch = await transaction.orderBatch.findUniqueOrThrow({
         where: { orderId_sequence: { orderId: order.id, sequence: 1 } },
@@ -185,12 +206,13 @@ export async function approveProposal(
       if (proposal.emailMessage.clientId && target.clientId !== proposal.emailMessage.clientId) {
         throw new Error("Target order does not belong to the resolved client");
       }
-      if (!target.gmailThreadId) {
-        await transaction.order.update({
-          where: { id: target.id },
-          data: { gmailThreadId: proposal.emailMessage.gmailThreadId },
-        });
-      }
+      await transaction.order.update({
+        where: { id: target.id },
+        data: {
+          ...(!target.gmailThreadId ? { gmailThreadId: proposal.emailMessage.gmailThreadId } : {}),
+          ...(input.overrides?.eta ? { eta: input.overrides.eta } : {}),
+        },
+      });
       if (sources.length > 0) {
         const batch = await addBatchInTransaction(transaction, {
           orderId: target.id,
@@ -210,13 +232,6 @@ export async function approveProposal(
         correlationId: input.correlationId,
       });
     }
-
-    const outbound = await draftOutboundEmail(transaction, {
-      orderId,
-      template: "ACKNOWLEDGEMENT",
-      idempotencyKey: `ack:${orderId}:${proposal.emailMessageId}`,
-      gmailThreadId: proposal.emailMessage.gmailThreadId,
-    });
 
     await transaction.emailMessage.update({
       where: { id: proposal.emailMessageId },
@@ -261,7 +276,8 @@ export async function approveProposal(
           emailMessageId: proposal.emailMessageId,
           proposalId: proposal.id,
           proposalKind: kind,
-          outboundEmailId: outbound.id,
+          downloadUrl: input.overrides?.downloadUrl ?? null,
+          eta: input.overrides?.eta?.toISOString() ?? null,
         },
         actorUserId: input.actor.userId,
         actorLabel: input.actor.label,
@@ -279,12 +295,13 @@ export async function approveProposal(
         emailMessageId: proposal.emailMessageId,
         orderId,
         batchId,
-        outboundEmailId: outbound.id,
         kind,
+        downloadUrl: input.overrides?.downloadUrl ?? null,
+        eta: input.overrides?.eta?.toISOString() ?? null,
       },
     });
 
-    return { orderId, batchId, outboundEmailId: outbound.id };
+    return { orderId, batchId, outboundEmailId: null };
   });
 }
 

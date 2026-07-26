@@ -35,9 +35,10 @@ describe("email ingest service", () => {
     await prisma.$disconnect();
   });
 
-  it("creates one inbound message and one pending rule proposal", async () => {
+  it("creates one inbound message, pending proposal, and system-approved receipt", async () => {
     const result = await ingestEmail(prisma, input);
     expect(result.duplicate).toBe(false);
+    expect(result.receiptOutboundEmailId).not.toBeNull();
     await expect(prisma.emailMessage.count()).resolves.toBe(1);
     await expect(
       prisma.proposal.findUniqueOrThrow({ where: { id: result.proposalId } }),
@@ -45,6 +46,17 @@ describe("email ingest service", () => {
       kind: "CREATE_ORDER",
       source: "RULE",
       status: "PENDING",
+    });
+    await expect(
+      prisma.outboundEmail.findUniqueOrThrow({
+        where: { id: result.receiptOutboundEmailId ?? "" },
+      }),
+    ).resolves.toMatchObject({
+      template: "RECEIPT_ACKNOWLEDGEMENT",
+      status: "APPROVED",
+      approvedById: null,
+      orderId: null,
+      emailMessageId: result.emailMessageId,
     });
   });
 
@@ -54,6 +66,7 @@ describe("email ingest service", () => {
     expect(second).toEqual({ ...first, duplicate: true });
     await expect(prisma.emailMessage.count()).resolves.toBe(1);
     await expect(prisma.proposal.count()).resolves.toBe(1);
+    await expect(prisma.outboundEmail.count()).resolves.toBe(1);
   });
 
   it("preserves idempotency under concurrent delivery", async () => {
@@ -61,5 +74,6 @@ describe("email ingest service", () => {
     expect(results.filter((result) => result.duplicate)).toHaveLength(1);
     await expect(prisma.emailMessage.count()).resolves.toBe(1);
     await expect(prisma.proposal.count()).resolves.toBe(1);
+    await expect(prisma.outboundEmail.count()).resolves.toBe(1);
   });
 });
