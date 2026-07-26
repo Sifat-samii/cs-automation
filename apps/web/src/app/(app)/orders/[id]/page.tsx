@@ -1,13 +1,9 @@
 import { prisma } from "@cs/db";
-import type { BatchStatus, OrderStatus } from "@cs/shared";
+import { parseServerEnv, type OrderStatus } from "@cs/shared";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import {
-  AddBatchForm,
-  BatchStatusForm,
-  EtaForm,
-  OrderStatusForm,
-} from "@/app/(app)/orders/order-controls";
+import { AddBatchForm, EtaForm, OrderStatusForm } from "@/app/(app)/orders/order-controls";
+import { TransferMonitor, type TransferJobView } from "@/app/(app)/orders/transfer-monitor";
 import { requireUser } from "@/lib/auth/current-user";
 import { assertCan } from "@/lib/auth/rbac";
 
@@ -23,13 +19,17 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const user = await requireUser();
   assertCan(user.role, "order:write");
   const { id } = await params;
+  const env = parseServerEnv(process.env);
   const order = await prisma.order.findUnique({
     where: { id },
     include: {
       client: true,
       batches: {
         orderBy: { sequence: "asc" },
-        include: { sourceLinks: { orderBy: { createdAt: "asc" } } },
+        include: {
+          sourceLinks: { orderBy: { createdAt: "asc" } },
+          transferJobs: { orderBy: { createdAt: "asc" } },
+        },
       },
       events: { orderBy: { occurredAt: "asc" } },
     },
@@ -111,7 +111,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         <div>
           <h2 className="text-lg font-bold text-slate-950">Batches</h2>
           <p className="text-sm text-slate-600">
-            File movement has not started in Phase 1; these are operational records only.
+            Approved transfers run through staging, backup, production copy, and checksum
+            verification.
           </p>
         </div>
         <div className="grid gap-4 lg:grid-cols-2">
@@ -163,10 +164,22 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                   </ul>
                 )}
               </div>
-              <BatchStatusForm
+              <TransferMonitor
                 orderId={order.id}
                 batchId={batch.id}
-                status={batch.status as BatchStatus}
+                batchStatus={batch.status}
+                manualDropPath={`${env.STAGING_ROOT}\\manual\\${batch.id}`}
+                jobs={batch.transferJobs.map((job): TransferJobView => ({
+                  id: job.id,
+                  kind: job.kind,
+                  status: job.status,
+                  attempts: job.attempts,
+                  maxAttempts: job.maxAttempts,
+                  bytesDone: Number(job.bytesDone),
+                  bytesTotal: Number(job.bytesTotal),
+                  lastError: job.lastError,
+                  errorClass: job.errorClass,
+                }))}
               />
             </article>
           ))}
