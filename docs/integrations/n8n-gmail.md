@@ -14,7 +14,7 @@ CS outbound click.
   (`NODE_FUNCTION_ALLOW_BUILTIN=crypto` in the n8n service environment)
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` so Code nodes can read `INGEST_HMAC_SECRET`
 - the web application is reachable from the service at `http://127.0.0.1:3100`
-- **Phase 4:** poll HTTP Request timeout must exceed `AI_TIMEOUT_MS` (default 60000). Use **90000–120000 ms** so classification/conversation drafting can finish before n8n aborts.
+- **Phase 4:** poll HTTP Request timeout must exceed **2 × `AI_TIMEOUT_MS`** (the Ollama client retries once on transport error). With the default `AI_TIMEOUT_MS=60000`, set the n8n timeout to at least **130000 ms** (2 × 60 s + 10 s margin).
 
 Never paste the HMAC secret or OAuth token into a workflow export.
 

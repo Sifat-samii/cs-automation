@@ -19,6 +19,7 @@ export function etaTagFor(order: {
   status: string;
   etaSentAt: Date | string | null | undefined;
 }): EtaTag | null {
+  if (order.status === "READY_TO_UPLOAD") return null;
   if (order.etaSentAt) return "ETA Sent";
   if (order.status === "IN_PRODUCTION") return "ETA Required";
   return null;

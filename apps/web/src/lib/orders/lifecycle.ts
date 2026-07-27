@@ -299,7 +299,7 @@ export async function setOrderEta(db: PrismaClient, input: SetOrderEtaInput) {
             orderId: order.id,
             type: "outbound.suppressed_paused",
             payload: {
-              template: isChange ? "ETA_UPDATE" : "ETA_UPDATE",
+              template: "ETA_UPDATE",
               reason: "communication_paused",
             },
             actorUserId: input.actor.userId,

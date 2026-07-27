@@ -14,8 +14,8 @@ export async function isCommunicationPaused(
       where: { gmailThreadId: threadId },
       select: { paused: true },
     }),
-    db.order.findUnique({
-      where: { gmailThreadId: threadId },
+    db.order.findFirst({
+      where: { gmailThreadId: threadId, communicationPaused: true },
       select: { communicationPaused: true },
     }),
   ]);

@@ -248,6 +248,7 @@ export async function approveOrderAction(
   revalidatePath(`/orders/${parsed.data.orderId}`);
   revalidatePath("/orders");
   revalidatePath("/inbox");
+  revalidatePath("/dashboard");
   return { error: null };
 }
 
@@ -345,6 +346,7 @@ export async function markReadyToUploadAction(
 
   revalidatePath(`/orders/${parsed.data.orderId}`);
   revalidatePath("/orders");
+  revalidatePath("/dashboard");
   return { error: null };
 }
 

@@ -24,7 +24,7 @@ Import (or re-import) from `n8n/workflows/`:
 - `gmail-send.json`
 - `google-sheets-mirror.json`
 
-Re-attach OAuth credentials on Gmail and Sheets nodes. Set the poll HTTP request timeout **greater than** `AI_TIMEOUT_MS` (default 60000 → use at least 90000–120000 ms). Activate all three workflows.
+Re-attach OAuth credentials on Gmail and Sheets nodes. Set the poll HTTP request timeout to **at least 2 × `AI_TIMEOUT_MS` + 10 s** (default 60 000 → use **130 000 ms**) because the Ollama client retries once on transport error. Activate all three workflows.
 
 ## Smoke checklist
 

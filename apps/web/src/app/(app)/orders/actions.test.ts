@@ -79,7 +79,8 @@ describe("order actions", () => {
       /redirect:\/orders\//u,
     );
     const order = await prisma.order.findFirstOrThrow();
-    expect(order.folderName).toBe("VRLY_260726_001__kirkland_spring_drop");
+    const dateTag = new Date().toISOString().slice(2, 10).replaceAll("-", "");
+    expect(order.folderName).toBe(`VRLY_${dateTag}_001__kirkland_spring_drop`);
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/orders");
     expect(mocks.redirect).toHaveBeenCalledWith(`/orders/${order.id}`);
   });
