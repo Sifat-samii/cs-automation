@@ -2,6 +2,7 @@ import { prisma } from "@cs/db";
 import { resetDatabase } from "@cs/db/testing";
 import { signRequest } from "@cs/shared";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { POST as failRoute } from "@/app/api/outbound/[id]/fail/route";
 import { POST as sentRoute } from "@/app/api/outbound/[id]/sent/route";
 import { GET as pendingRoute } from "@/app/api/outbound/pending/route";
 import { AGENT_SIGNATURE_HEADER, AGENT_TIMESTAMP_HEADER } from "@/lib/agent/http";
@@ -149,5 +150,32 @@ describe("HMAC outbound queue routes", () => {
     await expect(
       prisma.outboundEmail.findUniqueOrThrow({ where: { id: fixtures.approvedId } }),
     ).resolves.toMatchObject({ status: "SENT", sentMessageId: "sent-message-1" });
+  });
+
+  it("requeues a claimed SENDING row when Gmail transport reports failure", async () => {
+    const fixtures = await createFixtures();
+    const pending = await pendingRoute(
+      signedRequest("http://localhost/api/outbound/pending", "GET"),
+    );
+    expect(pending.status).toBe(200);
+
+    const failed = await failRoute(
+      signedRequest(`http://localhost/api/outbound/${fixtures.approvedId}/fail`, "POST", {
+        error: "Gmail API rejected the thread id",
+      }),
+      params(fixtures.approvedId),
+    );
+    expect(failed.status).toBe(200);
+    await expect(
+      prisma.outboundEmail.findUniqueOrThrow({ where: { id: fixtures.approvedId } }),
+    ).resolves.toMatchObject({
+      status: "APPROVED",
+      lastError: "Gmail API rejected the thread id",
+    });
+
+    const retry = await pendingRoute(signedRequest("http://localhost/api/outbound/pending", "GET"));
+    expect(retry.status).toBe(200);
+    const body = (await retry.json()) as { outbound: Array<{ id: string }> };
+    expect(body.outbound).toEqual([expect.objectContaining({ id: fixtures.approvedId })]);
   });
 });

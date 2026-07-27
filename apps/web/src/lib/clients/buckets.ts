@@ -1,13 +1,8 @@
 import type { OrderStatus } from "@cs/shared";
 
-export const PAST_ORDER_STATUSES = ["CLOSED", "CANCELLED"] as const;
+export const PAST_ORDER_STATUSES = ["READY_TO_UPLOAD"] as const;
 export const IN_PRODUCTION_ORDER_STATUSES = ["IN_PRODUCTION"] as const;
-export const UNASSIGNED_ORDER_STATUSES = [
-  "DRAFT",
-  "ACKNOWLEDGED",
-  "AWAITING_ETA",
-  "ETA_SENT",
-] as const;
+export const UNASSIGNED_ORDER_STATUSES = ["UNASSIGNED"] as const;
 
 export type OrderBucket = "past" | "inProduction" | "unassigned";
 

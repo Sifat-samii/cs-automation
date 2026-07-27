@@ -14,6 +14,7 @@ CS outbound click.
   (`NODE_FUNCTION_ALLOW_BUILTIN=crypto` in the n8n service environment)
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` so Code nodes can read `INGEST_HMAC_SECRET`
 - the web application is reachable from the service at `http://127.0.0.1:3100`
+- **Phase 4:** poll HTTP Request timeout must exceed `AI_TIMEOUT_MS` (default 60000). Use **90000–120000 ms** so classification/conversation drafting can finish before n8n aborts.
 
 Never paste the HMAC secret or OAuth token into a workflow export.
 
@@ -71,13 +72,27 @@ not create a second inbox row or a second receipt outbound.
   valid row to `SENDING`, and returns it to exactly one poller.
 - Invalid rows are moved to `FAILED` individually, so one missing recipient cannot block other
   outbound mail.
-- `SENDING` rows are never automatically reclaimed. If Gmail succeeds but the signed callback
-  fails, the row remains quarantined from further sends until an operator reconciles its Gmail
-  thread and records the provider message id.
+- `SENDING` rows are never automatically reclaimed after a successful Gmail send with a failed
+  callback (risk of duplicate send). If the Gmail node itself fails, the send workflow posts
+  `POST /api/outbound/:id/fail`, which returns the row to `APPROVED` with `lastError` so the next
+  poll can retry.
 - Placeholder copy cannot transition from `DRAFT` to `APPROVED`.
 - The send workflow passes `gmailThreadId` to Gmail and calls the signed sent callback only after
   Gmail returns a provider message id.
 - Both exported workflows are inactive by default.
+
+## Operator recovery
+
+If a dry-run left a row stuck in `SENDING` (older workflow without the fail callback):
+
+```sql
+UPDATE "OutboundEmail"
+SET status = 'APPROVED', "lastError" = 'manual requeue after transport failure'
+WHERE status = 'SENDING' AND "sentMessageId" IS NULL;
+```
+
+Re-import `n8n/workflows/gmail-send.json` after pulling so the HTML body, no n8n attribution, and
+fail-callback branch are active. Re-attach `SHARED_CS_GMAIL_OAUTH` on the Gmail node.
 
 The ingest burst limiter is process-local by design for the single Next.js instance on this host.
 Replace it with a shared database or Redis limiter before any horizontally scaled deployment.

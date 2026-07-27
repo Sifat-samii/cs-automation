@@ -33,6 +33,18 @@ export const serverEnvSchema = z.object({
   BACKUP_ROOT_UNC: uncPath,
   PRODUCTION_ROOT_UNC: uncPath,
   STAGING_ROOT: stagingPath,
+  AI_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
+  OLLAMA_BASE_URL: z.string().url().default("http://127.0.0.1:11434"),
+  OLLAMA_MODEL: z.string().min(1).default("qwen3:8b"),
+  AI_TIMEOUT_MS: z.coerce.number().int().positive().max(300_000).default(60_000),
+  AI_MAX_THREAD_AUTO_REPLIES_24H: z.coerce.number().int().positive().max(100).default(5),
+  CS_MAILBOX_ADDRESS: z.preprocess(
+    (value) => (value === "" || value === null || value === undefined ? undefined : value),
+    z.string().email().max(320).optional(),
+  ),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

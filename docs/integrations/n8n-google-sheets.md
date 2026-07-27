@@ -18,6 +18,10 @@ Transport-only workflow: Postgres remains authoritative. n8n never writes into t
 1. Import [`n8n/workflows/google-sheets-mirror.json`](../../n8n/workflows/google-sheets-mirror.json) (`active: false`).
 2. Attach the Sheets OAuth credential to both Google Sheets nodes.
 3. Confirm the tab name is `Daily Order Pipeline`.
+4. Keep Document **By ID** as `{{ $env.GOOGLE_SHEETS_SPREADSHEET_ID }}`. The editor may show
+   “not accessible via UI” / “No columns found” — that is expected. The export embeds
+   `columns.schema` and `columns.matchingColumns` (`Order Name`) so runtime does not need the UI
+   column fetch. Re-import after pulling if you still see `Could not get parameter "columns.schema"`.
 
 ## Behaviour
 

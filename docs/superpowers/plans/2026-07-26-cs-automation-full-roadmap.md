@@ -121,9 +121,9 @@ Phase 5 depends only on Phase 1 because the mirror projects order state. It may 
 
 ## CONTRACT: order and batch lifecycles
 
-Order status, owned by the client relationship: `DRAFT`, `ACKNOWLEDGED`, `AWAITING_ETA`, `ETA_SENT`, `IN_PRODUCTION`, `CLOSED`, `CANCELLED`.
+Order status, owned by the client relationship (Phase 4 rewrite): `UNASSIGNED`, `IN_PRODUCTION`, `READY_TO_UPLOAD`.
 
-Legal order transitions: `DRAFT` to `ACKNOWLEDGED` or `CANCELLED`; `ACKNOWLEDGED` to `AWAITING_ETA`, `ETA_SENT`, or `CANCELLED`; `AWAITING_ETA` to `ETA_SENT` or `CANCELLED`; `ETA_SENT` to `IN_PRODUCTION` or `CANCELLED`; `IN_PRODUCTION` to `CLOSED` or `CANCELLED`; `CLOSED` and `CANCELLED` are terminal.
+Legal order transitions: `UNASSIGNED` to `IN_PRODUCTION`; `IN_PRODUCTION` to `READY_TO_UPLOAD`; `READY_TO_UPLOAD` is terminal. There is no Cancel transition. ETA is not a status — it is a locked field with derived tags `ETA Required` and `ETA Sent`.
 
 Batch status, owned by file movement: `PENDING`, `DOWNLOADING`, `STAGED`, `WRITTEN_BACKUP`, `COPIED_PRODUCTION`, `VERIFIED`, `FAILED`, `CANCELLED`. Transitions follow the pipeline order; any non-terminal state may go to `FAILED`; `FAILED` may return to `PENDING` on operator retry; `VERIFIED` and `CANCELLED` are terminal.
 
@@ -135,7 +135,7 @@ An order may hold multiple batches in different states simultaneously. An order 
 - Phase 1 produces Prisma models `Client`, `ClientIdentity`, `Order`, `OrderBatch`, `SourceLink`, `OrderEvent`. Phase 2 adds `TransferJob` and `FileArtifact` only. Phase 3 adds `EmailMessage`, `Proposal`, `OutboundEmail` only. Phase 5 adds `SheetMirrorOutbox` only.
 - Phase 2 produces the agent HTTP contract at `/api/agent/jobs/lease`, `/api/agent/jobs/:id/progress`, `/api/agent/jobs/:id/complete`, `/api/agent/jobs/:id/fail`, all HMAC-signed with the Phase 0 `signRequest` and `verifyRequest`.
 - Phase 3 produces `/api/ingest/email`, idempotent on Gmail `messageId`, plus `/api/outbound/pending` and `/api/outbound/:id/sent`.
-- Phase 4 produces the `OrderExtractor` interface and must not change any endpoint.
+- Phase 4 produces the local AI orchestrator (`apps/web/src/lib/ai/`), three-status order lifecycle, and system auto-send for confirmation / ETA / query / conversation templates under ADR 0009. Existing ingest and outbound endpoints remain; behaviour changes are additive.
 
 ---
 

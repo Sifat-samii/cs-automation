@@ -1,7 +1,7 @@
 import { prisma } from "@cs/db";
 import { resetDatabase } from "@cs/db/testing";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { setEta } from "@/lib/orders/lifecycle";
+import { approveOrder, setOrderEta } from "@/lib/orders/lifecycle";
 import { handleBatchVerified } from "@/lib/outbound/verified";
 
 const actor = {
@@ -10,8 +10,8 @@ const actor = {
 };
 const correlationId = "22222222-2222-4222-8222-222222222222";
 
-async function createFixtures(input: {
-  orderStatus: "DRAFT" | "ACKNOWLEDGED" | "AWAITING_ETA";
+async function createFixtures(input?: {
+  orderStatus?: "UNASSIGNED" | "IN_PRODUCTION";
   eta?: Date;
 }): Promise<{ orderId: string; batchId: string }> {
   await prisma.user.create({
@@ -32,8 +32,8 @@ async function createFixtures(input: {
       clientId: client.id,
       title: "Spring Drop",
       orderType: "Standard",
-      status: input.orderStatus,
-      ...(input.eta ? { eta: input.eta } : {}),
+      status: input?.orderStatus ?? "IN_PRODUCTION",
+      ...(input?.eta ? { eta: input.eta, etaLockedAt: input.eta, etaSentAt: input.eta } : {}),
       gmailThreadId: "gmail-thread-1",
       folderName: "VRLY_260726_001__spring_drop",
       backupPath: "\\\\server\\backup\\Verily\\VRLY_260726_001__spring_drop",
@@ -75,16 +75,14 @@ describe("files-verified and ETA outbound drafting", () => {
     await prisma.$disconnect();
   });
 
-  it("system-approves FILES_VERIFIED with an existing ETA without changing order status", async () => {
+  it("system-approves FILES_VERIFIED without changing order status", async () => {
     const eta = new Date("2026-07-28T09:00:00.000Z");
-    const fixture = await createFixtures({ orderStatus: "ACKNOWLEDGED", eta });
+    const fixture = await createFixtures({ orderStatus: "IN_PRODUCTION", eta });
     const result = await handleBatchVerified(prisma, {
       batchId: fixture.batchId,
       correlationId,
     });
-    expect(result).toMatchObject({
-      transitionedToAwaitingEta: false,
-    });
+    expect(result.outboundEmailId).toBeTruthy();
     await expect(
       prisma.outboundEmail.findUniqueOrThrow({
         where: { idempotencyKey: `files-verified:${fixture.batchId}` },
@@ -96,30 +94,19 @@ describe("files-verified and ETA outbound drafting", () => {
     });
     await expect(
       prisma.order.findUniqueOrThrow({ where: { id: fixture.orderId } }),
-    ).resolves.toMatchObject({ status: "ACKNOWLEDGED", eta });
+    ).resolves.toMatchObject({ status: "IN_PRODUCTION", eta });
   });
 
-  it("system-approves FILES_VERIFIED and moves an acknowledged order to AWAITING_ETA", async () => {
-    const fixture = await createFixtures({ orderStatus: "ACKNOWLEDGED" });
-    const result = await handleBatchVerified(prisma, {
-      batchId: fixture.batchId,
+  it("drafts ETA_UPDATE when ETA is set on an in-production order", async () => {
+    const fixture = await createFixtures({ orderStatus: "UNASSIGNED" });
+    await approveOrder(prisma, {
+      orderId: fixture.orderId,
+      actor,
       correlationId,
+      now: new Date("2026-07-26T12:00:00.000Z"),
     });
-    expect(result.transitionedToAwaitingEta).toBe(true);
-    await expect(
-      prisma.order.findUniqueOrThrow({ where: { id: fixture.orderId } }),
-    ).resolves.toMatchObject({ status: "AWAITING_ETA", eta: null });
-    await expect(
-      prisma.orderEvent.findFirst({
-        where: { orderId: fixture.orderId, type: "order.status_changed" },
-      }),
-    ).resolves.toBeTruthy();
-  });
-
-  it("drafts ETA_NOTICE when ETA is set while awaiting it", async () => {
-    const fixture = await createFixtures({ orderStatus: "AWAITING_ETA" });
     const eta = new Date("2026-07-29T09:00:00.000Z");
-    await setEta(prisma, {
+    await setOrderEta(prisma, {
       orderId: fixture.orderId,
       eta,
       actor,
@@ -128,8 +115,8 @@ describe("files-verified and ETA outbound drafting", () => {
     });
     await expect(
       prisma.outboundEmail.findUniqueOrThrow({
-        where: { idempotencyKey: `eta:${fixture.orderId}:${eta.toISOString()}` },
+        where: { idempotencyKey: `eta-update:${fixture.orderId}:${eta.toISOString()}` },
       }),
-    ).resolves.toMatchObject({ template: "ETA_NOTICE", status: "DRAFT" });
+    ).resolves.toMatchObject({ template: "ETA_UPDATE", status: "APPROVED" });
   });
 });

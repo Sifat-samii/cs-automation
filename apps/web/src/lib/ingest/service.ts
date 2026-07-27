@@ -5,8 +5,10 @@ import {
   type EmailAttachmentInput,
   type ExtractEmailInput,
 } from "@/lib/ingest/extract";
+import { orchestrateInboundEmail, type OrchestrateInboundResult } from "@/lib/ingest/orchestrate";
 import { buildRuleProposal } from "@/lib/ingest/rules";
-import { draftAndSystemApproveOutbound } from "@/lib/outbound/service";
+import { isCommunicationPaused } from "@/lib/outbound/pause";
+import { draftAndSystemApproveOutbound, OutboundPausedError } from "@/lib/outbound/service";
 
 const attachmentSchema = z.object({
   filename: z.string().trim().min(1).max(500),
@@ -32,6 +34,7 @@ export type IngestEmailResult = {
   proposalId: string;
   duplicate: boolean;
   receiptOutboundEmailId: string | null;
+  orchestration: OrchestrateInboundResult | null;
 };
 
 function isGmailMessageCollision(error: unknown): boolean {
@@ -71,81 +74,112 @@ async function existingResult(
     proposalId,
     duplicate: true,
     receiptOutboundEmailId: receipt?.id ?? null,
+    orchestration: null,
   };
+}
+
+type PersistResult = {
+  emailMessageId: string;
+  proposalId: string;
+  receiptOutboundEmailId: string | null;
+  gmailThreadId: string;
+  fromAddress: string;
+};
+
+async function persistInboundEmail(
+  db: PrismaClient,
+  input: IngestEmailInput,
+): Promise<PersistResult> {
+  return db.$transaction(async (transaction) => {
+    const extractInput: ExtractEmailInput = {
+      gmailThreadId: input.gmailThreadId,
+      fromAddress: input.fromAddress,
+      subject: input.subject,
+      bodyText: input.bodyText,
+      ...(input.attachments
+        ? { attachments: input.attachments as readonly EmailAttachmentInput[] }
+        : {}),
+    };
+    const extraction = await extractFromEmail(transaction, extractInput);
+    const proposed = buildRuleProposal(extraction);
+    const message = await transaction.emailMessage.create({
+      data: {
+        gmailMessageId: input.gmailMessageId,
+        gmailThreadId: input.gmailThreadId,
+        direction: "INBOUND",
+        fromAddress: input.fromAddress.toLowerCase(),
+        toAddresses: input.toAddresses.map((address) => address.toLowerCase()),
+        subject: input.subject,
+        bodyText: input.bodyText,
+        receivedAt: input.receivedAt,
+        clientId: extraction.clientId,
+        orderId: extraction.orderId,
+        proposals: {
+          create: {
+            kind: proposed.kind,
+            payload: proposed.payload,
+            confidence: proposed.confidence,
+            source: "RULE",
+            evidence: proposed.evidence,
+          },
+        },
+      },
+      select: {
+        id: true,
+        proposals: { select: { id: true } },
+        client: { select: { displayName: true } },
+      },
+    });
+    const proposalId = message.proposals[0]?.id;
+    if (!proposalId) throw new Error("Email proposal was not created");
+
+    let receiptOutboundEmailId: string | null = null;
+    const paused = await isCommunicationPaused(transaction, {
+      gmailThreadId: input.gmailThreadId,
+    });
+    if (!paused) {
+      try {
+        const title = input.subject.trim() || "your request";
+        const clientDisplayName =
+          message.client?.displayName ?? displayNameFromAddress(input.fromAddress);
+        const receipt = await draftAndSystemApproveOutbound(transaction, {
+          template: "RECEIPT_ACKNOWLEDGEMENT",
+          idempotencyKey: `receipt-ack:${input.gmailMessageId}`,
+          gmailThreadId: input.gmailThreadId,
+          emailMessageId: message.id,
+          context: {
+            clientDisplayName,
+            title,
+          },
+          ignorePause: true,
+        });
+        receiptOutboundEmailId = receipt.id;
+      } catch (error) {
+        if (!(error instanceof OutboundPausedError)) throw error;
+      }
+    }
+
+    return {
+      emailMessageId: message.id,
+      proposalId,
+      receiptOutboundEmailId,
+      gmailThreadId: input.gmailThreadId,
+      fromAddress: input.fromAddress,
+    };
+  });
 }
 
 export async function ingestEmail(
   db: PrismaClient,
   input: IngestEmailInput,
+  options: { orchestrate?: boolean } = {},
 ): Promise<IngestEmailResult> {
   const duplicate = await existingResult(db, input.gmailMessageId);
   if (duplicate) return duplicate;
 
+  let persisted: PersistResult;
   try {
-    return await db.$transaction(async (transaction) => {
-      const extractInput: ExtractEmailInput = {
-        gmailThreadId: input.gmailThreadId,
-        fromAddress: input.fromAddress,
-        subject: input.subject,
-        bodyText: input.bodyText,
-        ...(input.attachments
-          ? { attachments: input.attachments as readonly EmailAttachmentInput[] }
-          : {}),
-      };
-      const extraction = await extractFromEmail(transaction, extractInput);
-      const proposed = buildRuleProposal(extraction);
-      const message = await transaction.emailMessage.create({
-        data: {
-          gmailMessageId: input.gmailMessageId,
-          gmailThreadId: input.gmailThreadId,
-          direction: "INBOUND",
-          fromAddress: input.fromAddress.toLowerCase(),
-          toAddresses: input.toAddresses.map((address) => address.toLowerCase()),
-          subject: input.subject,
-          bodyText: input.bodyText,
-          receivedAt: input.receivedAt,
-          clientId: extraction.clientId,
-          orderId: extraction.orderId,
-          proposals: {
-            create: {
-              kind: proposed.kind,
-              payload: proposed.payload,
-              confidence: proposed.confidence,
-              source: "RULE",
-              evidence: proposed.evidence,
-            },
-          },
-        },
-        select: {
-          id: true,
-          proposals: { select: { id: true } },
-          client: { select: { displayName: true } },
-        },
-      });
-      const proposalId = message.proposals[0]?.id;
-      if (!proposalId) throw new Error("Email proposal was not created");
-
-      const title = input.subject.trim() || "your request";
-      const clientDisplayName =
-        message.client?.displayName ?? displayNameFromAddress(input.fromAddress);
-      const receipt = await draftAndSystemApproveOutbound(transaction, {
-        template: "RECEIPT_ACKNOWLEDGEMENT",
-        idempotencyKey: `receipt-ack:${input.gmailMessageId}`,
-        gmailThreadId: input.gmailThreadId,
-        emailMessageId: message.id,
-        context: {
-          clientDisplayName,
-          title,
-        },
-      });
-
-      return {
-        emailMessageId: message.id,
-        proposalId,
-        duplicate: false,
-        receiptOutboundEmailId: receipt.id,
-      };
-    });
+    persisted = await persistInboundEmail(db, input);
   } catch (error) {
     if (isGmailMessageCollision(error)) {
       const replay = await existingResult(db, input.gmailMessageId);
@@ -153,4 +187,32 @@ export async function ingestEmail(
     }
     throw error;
   }
+
+  const shouldOrchestrate = options.orchestrate !== false;
+  let orchestration: OrchestrateInboundResult | null = null;
+  if (shouldOrchestrate) {
+    try {
+      orchestration = await orchestrateInboundEmail(db, {
+        emailMessageId: persisted.emailMessageId,
+        proposalId: persisted.proposalId,
+      });
+    } catch {
+      orchestration = {
+        paused: false,
+        skippedReason: "orchestration_error",
+        orderId: null,
+        batchId: null,
+        conversationOutboundId: null,
+        classification: null,
+      };
+    }
+  }
+
+  return {
+    emailMessageId: persisted.emailMessageId,
+    proposalId: persisted.proposalId,
+    duplicate: false,
+    receiptOutboundEmailId: persisted.receiptOutboundEmailId,
+    orchestration,
+  };
 }

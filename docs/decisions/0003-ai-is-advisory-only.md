@@ -22,7 +22,7 @@ Deterministic rules own client resolution, Gmail thread correlation, and Dropbox
 
 ## Status
 
-Accepted
+Accepted. **Superseded in part by ADR 0009** for conversation auto-reply, order auto-creation at ingest, and system auto-send of confirmation / ETA / query mail. Local-only models, Zod validation, and deterministic client/link ownership remain in force.
 
 ## Date
 

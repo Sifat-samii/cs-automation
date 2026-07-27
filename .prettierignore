@@ -1,0 +1,8 @@
+**/dist/**
+**/.next/**
+**/node_modules/**
+**/generated/**
+.agents/**
+.superpowers/**
+coverage/**
+*.min.js

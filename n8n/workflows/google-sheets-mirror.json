@@ -76,12 +76,52 @@
             "Client": "={{ $json.row.Client }}",
             "Order Name": "={{ $json.row['Order Name'] }}",
             "Quantity": "={{ $json.row.Quantity }}"
-          }
+          },
+          "matchingColumns": ["Order Name"],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Client",
+              "displayName": "Client",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Order Name",
+              "displayName": "Order Name",
+              "required": true,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Quantity",
+              "displayName": "Quantity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         },
         "options": {
           "cellFormat": "USER_ENTERED"
-        },
-        "matchingColumns": ["Order Name"]
+        }
       },
       "id": "e5f6a7b8-c9d0-4123-e456-789abcdef012",
       "name": "Upsert Order Row",
@@ -131,7 +171,48 @@
             "Client": "",
             "Order Name": "",
             "Quantity": ""
-          }
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Client",
+              "displayName": "Client",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Order Name",
+              "displayName": "Order Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Quantity",
+              "displayName": "Quantity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         },
         "options": {
           "cellFormat": "USER_ENTERED"
@@ -221,7 +302,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "phase5-sheets-mirror-001",
+  "versionId": "phase5-sheets-mirror-002",
   "meta": {
     "templateCredsSetupCompleted": false
   },

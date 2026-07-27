@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Prisma, type DbClient, type OutboundTemplate, type PrismaClient } from "@cs/db";
-import { assertOrderTransition, type OrderStatus } from "@cs/shared";
 import { recordAudit } from "@/lib/audit";
+import { isCommunicationPaused } from "@/lib/outbound/pause";
 import {
+  clampOutboundCopy,
   containsGateBlockedPlaceholder,
+  plainTextToEmailHtml,
   renderOutboundTemplate,
   type TemplateContext,
 } from "@/lib/outbound/templates";
@@ -24,6 +26,13 @@ export class OutboundCopyGateError extends OutboundStateError {
   }
 }
 
+export class OutboundPausedError extends OutboundStateError {
+  constructor() {
+    super("Client communication is paused for this thread");
+    this.name = "OutboundPausedError";
+  }
+}
+
 export type DraftOutboundInput = {
   orderId: string;
   template: OutboundTemplate;
@@ -37,9 +46,40 @@ export type DraftSystemOutboundInput = {
   gmailThreadId: string;
   orderId?: string;
   emailMessageId?: string;
-  context: TemplateContext;
+  context?: TemplateContext;
+  rendered?: { subject: string; body: string };
+  bodySource?: "TEMPLATE" | "AI";
+  aiModel?: string;
   now?: Date;
+  /** When true, skip the pause check (caller already verified). */
+  ignorePause?: boolean;
 };
+
+function resolveRenderedCopy(input: DraftSystemOutboundInput): {
+  subject: string;
+  body: string;
+  bodySource: "TEMPLATE" | "AI";
+} {
+  if (input.rendered) {
+    const clamped = clampOutboundCopy(input.rendered.subject, input.rendered.body);
+    const bodyLooksHtml = /<[a-z][\s\S]*>/iu.test(clamped.body);
+    return {
+      subject: clamped.subject,
+      body: bodyLooksHtml ? clamped.body : plainTextToEmailHtml(clamped.body),
+      bodySource: input.bodySource ?? "AI",
+    };
+  }
+  if (!input.context) {
+    throw new Error("System outbound draft requires context or rendered copy");
+  }
+  const rendered = renderOutboundTemplate(input.template, input.context);
+  const clamped = clampOutboundCopy(rendered.subject, rendered.body);
+  return {
+    subject: clamped.subject,
+    body: clamped.body,
+    bodySource: input.bodySource ?? "TEMPLATE",
+  };
+}
 
 export async function draftOutboundEmail(db: DbClient, input: DraftOutboundInput) {
   const existing = await db.outboundEmail.findUnique({
@@ -68,6 +108,7 @@ export async function draftOutboundEmail(db: DbClient, input: DraftOutboundInput
       template: input.template,
       renderedSubject: rendered.subject,
       renderedBody: rendered.body,
+      bodySource: "TEMPLATE",
       idempotencyKey: input.idempotencyKey,
       gmailThreadId,
     },
@@ -76,6 +117,13 @@ export async function draftOutboundEmail(db: DbClient, input: DraftOutboundInput
 
 export async function draftAndSystemApproveOutbound(db: DbClient, input: DraftSystemOutboundInput) {
   const now = input.now ?? new Date();
+  if (
+    !input.ignorePause &&
+    (await isCommunicationPaused(db, { gmailThreadId: input.gmailThreadId }))
+  ) {
+    throw new OutboundPausedError();
+  }
+
   const existing = await db.outboundEmail.findUnique({
     where: { idempotencyKey: input.idempotencyKey },
   });
@@ -101,8 +149,8 @@ export async function draftAndSystemApproveOutbound(db: DbClient, input: DraftSy
     });
   }
 
-  const rendered = renderOutboundTemplate(input.template, input.context);
-  if (containsGateBlockedPlaceholder(rendered.subject, rendered.body)) {
+  const resolved = resolveRenderedCopy(input);
+  if (containsGateBlockedPlaceholder(resolved.subject, resolved.body)) {
     throw new OutboundCopyGateError();
   }
 
@@ -111,8 +159,10 @@ export async function draftAndSystemApproveOutbound(db: DbClient, input: DraftSy
       ...(input.orderId ? { orderId: input.orderId } : {}),
       ...(input.emailMessageId ? { emailMessageId: input.emailMessageId } : {}),
       template: input.template,
-      renderedSubject: rendered.subject,
-      renderedBody: rendered.body,
+      renderedSubject: resolved.subject,
+      renderedBody: resolved.body,
+      bodySource: resolved.bodySource,
+      ...(input.aiModel ? { aiModel: input.aiModel } : {}),
       status: "APPROVED",
       approvedById: null,
       approvedAt: now,
@@ -131,6 +181,8 @@ export async function draftAndSystemApproveOutbound(db: DbClient, input: DraftSy
       template: input.template,
       orderId: input.orderId ?? null,
       emailMessageId: input.emailMessageId ?? null,
+      bodySource: resolved.bodySource,
+      aiModel: input.aiModel ?? null,
     },
   });
   return created;
@@ -159,6 +211,9 @@ export async function approveOutboundEmail(
     }
     if (!outbound.order) {
       throw new OutboundStateError("Human approval requires an order-linked outbound email");
+    }
+    if (await isCommunicationPaused(transaction, { gmailThreadId: outbound.gmailThreadId })) {
+      throw new OutboundPausedError();
     }
     const rendered = renderOutboundTemplate(outbound.template, {
       orderCode: outbound.order.code,
@@ -239,6 +294,11 @@ export async function claimPendingOutbound(db: PrismaClient, limit: number = 50)
       const row = rowsById.get(id);
       if (!row) continue;
 
+      if (await isCommunicationPaused(transaction, { gmailThreadId: row.gmailThreadId })) {
+        // Leave APPROVED so send resumes after Pause/Resume.
+        continue;
+      }
+
       let toAddress: string | null = null;
       if (row.emailMessage && row.emailMessage.gmailThreadId === row.gmailThreadId) {
         toAddress = row.emailMessage.fromAddress;
@@ -290,94 +350,6 @@ export async function claimPendingOutbound(db: PrismaClient, limit: number = 50)
   });
 }
 
-async function recordTransportOrderTransition(
-  db: DbClient,
-  input: {
-    orderId: string;
-    from: OrderStatus;
-    to: OrderStatus;
-    reason: string;
-    correlationId: string;
-  },
-): Promise<void> {
-  assertOrderTransition(input.from, input.to);
-  const updated = await db.order.updateMany({
-    where: { id: input.orderId, status: input.from },
-    data: { status: input.to },
-  });
-  if (updated.count !== 1) {
-    throw new OutboundStateError("Order changed concurrently during outbound delivery");
-  }
-  await db.orderEvent.create({
-    data: {
-      orderId: input.orderId,
-      type: "order.status_changed",
-      payload: {
-        from: input.from,
-        to: input.to,
-        reason: input.reason,
-      },
-      actorLabel: "Gmail Transport",
-      correlationId: input.correlationId,
-    },
-  });
-  await recordAudit(db, {
-    correlationId: input.correlationId,
-    actorUserId: null,
-    actorLabel: "Gmail Transport",
-    action: "order.status_changed",
-    entityType: "Order",
-    entityId: input.orderId,
-    metadata: {
-      from: input.from,
-      to: input.to,
-      reason: input.reason,
-    },
-  });
-}
-
-async function advanceOrderAfterClientConfirmation(
-  db: DbClient,
-  input: { orderId: string; correlationId: string; reason: string },
-): Promise<void> {
-  await db.$queryRaw`
-    SELECT "id"
-    FROM "Order"
-    WHERE "id" = ${input.orderId}::uuid
-    FOR UPDATE
-  `;
-  const order = await db.order.findUniqueOrThrow({
-    where: { id: input.orderId },
-    select: { status: true, eta: true },
-  });
-  let status = order.status as OrderStatus;
-  if (status === "DRAFT") {
-    await recordTransportOrderTransition(db, {
-      orderId: input.orderId,
-      from: "DRAFT",
-      to: "ACKNOWLEDGED",
-      reason: input.reason,
-      correlationId: input.correlationId,
-    });
-    status = "ACKNOWLEDGED";
-  }
-  if (
-    status === "ACKNOWLEDGED" &&
-    !order.eta &&
-    (await db.orderBatch.count({
-      where: { orderId: input.orderId, status: "VERIFIED" },
-    })) > 0
-  ) {
-    await recordTransportOrderTransition(db, {
-      orderId: input.orderId,
-      from: "ACKNOWLEDGED",
-      to: "AWAITING_ETA",
-      reason: `${input.reason}_after_files_verified`,
-      correlationId: input.correlationId,
-    });
-  }
-}
-
 export async function markOutboundSent(
   db: PrismaClient,
   input: { outboundEmailId: string; sentMessageId: string },
@@ -417,20 +389,72 @@ export async function markOutboundSent(
         lastError: null,
       },
     });
-    if (outbound.orderId && outbound.template === "ACKNOWLEDGEMENT") {
-      await advanceOrderAfterClientConfirmation(transaction, {
-        orderId: outbound.orderId,
-        correlationId: randomUUID(),
-        reason: "acknowledgement_sent",
+
+    // Receipt ack may re-ensure download is queued once the order already exists.
+    if (outbound.template === "RECEIPT_ACKNOWLEDGEMENT" && outbound.emailMessageId) {
+      const message = await transaction.emailMessage.findUnique({
+        where: { id: outbound.emailMessageId },
+        select: { orderId: true },
       });
-    }
-    if (outbound.orderId && outbound.template === "FILES_VERIFIED") {
-      await advanceOrderAfterClientConfirmation(transaction, {
-        orderId: outbound.orderId,
-        correlationId: randomUUID(),
-        reason: "files_verified_sent",
-      });
+      if (message?.orderId) {
+        const batch = await transaction.orderBatch.findFirst({
+          where: {
+            orderId: message.orderId,
+            sequence: 1,
+            status: { in: ["PENDING", "FAILED"] },
+            sourceLinks: { some: {} },
+          },
+          select: { id: true },
+        });
+        if (batch) {
+          const { queueBatchTransfer } = await import("@/lib/agent/pipeline");
+          await queueBatchTransfer(transaction, {
+            batchId: batch.id,
+            correlationId: randomUUID(),
+          });
+        }
+      }
     }
     return sent;
+  });
+}
+
+/** Return a transport-failed SENDING row to APPROVED so n8n can safely retry. */
+export async function requeueOutboundAfterTransportFailure(
+  db: PrismaClient,
+  input: { outboundEmailId: string; error: string },
+) {
+  const error = input.error.trim().slice(0, 2_000);
+  if (!error) throw new OutboundStateError("Transport failure error is required");
+
+  return db.$transaction(async (transaction) => {
+    await transaction.$queryRaw`
+      SELECT "id"
+      FROM "OutboundEmail"
+      WHERE "id" = ${input.outboundEmailId}::uuid
+      FOR UPDATE
+    `;
+    const outbound = await transaction.outboundEmail.findUnique({
+      where: { id: input.outboundEmailId },
+    });
+    if (!outbound) throw new OutboundStateError("Outbound email does not exist");
+    if (outbound.status === "APPROVED") return outbound;
+    if (outbound.status !== "SENDING") {
+      throw new OutboundStateError(`Cannot requeue outbound email from ${outbound.status}`);
+    }
+    if (outbound.sentMessageId) {
+      throw new OutboundStateError("Outbound email already has a provider message id");
+    }
+    if (!outbound.approvedAt) {
+      throw new OutboundStateError("Outbound email has no recorded approval");
+    }
+
+    return transaction.outboundEmail.update({
+      where: { id: outbound.id },
+      data: {
+        status: "APPROVED",
+        lastError: error,
+      },
+    });
   });
 }

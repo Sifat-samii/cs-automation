@@ -51,7 +51,7 @@ export async function addBatchInTransaction(db: DbClient, input: AddBatchInput) 
   if (!order) {
     throw new Error("Order does not exist");
   }
-  if (order.status === "CLOSED" || order.status === "CANCELLED") {
+  if (order.status === "READY_TO_UPLOAD") {
     throw new Error(`Cannot add a batch to terminal order ${order.status}`);
   }
 

@@ -9,7 +9,7 @@ export default async function DashboardPage() {
     prisma.order.count(),
     prisma.client.count({ where: { isActive: true } }),
     prisma.order.count({
-      where: { status: { notIn: ["CLOSED", "CANCELLED"] } },
+      where: { status: { notIn: ["READY_TO_UPLOAD"] } },
     }),
   ]);
 

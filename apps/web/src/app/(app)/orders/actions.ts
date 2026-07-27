@@ -2,20 +2,25 @@
 
 import { randomUUID } from "node:crypto";
 import { prisma } from "@cs/db";
-import { BATCH_STATUSES, ORDER_STATUSES, parseServerEnv } from "@cs/shared";
+import { BATCH_STATUSES, parseServerEnv } from "@cs/shared";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth/current-user";
 import { assertCan } from "@/lib/auth/rbac";
+import { AiOrchestrator } from "@/lib/ai/index";
 import { addBatch } from "@/lib/orders/batches";
 import { createOrder } from "@/lib/orders/create";
-import { setBatchStatus, setEta, setOrderStatus } from "@/lib/orders/lifecycle";
 import {
-  approveOutboundEmail,
-  OutboundCopyGateError,
-  OutboundStateError,
-} from "@/lib/outbound/service";
+  approveOrder,
+  markReadyToUpload,
+  sendQueryEmail,
+  setBatchStatus,
+  setOrderEta,
+  updateOrderDetails,
+} from "@/lib/orders/lifecycle";
+import { setCommunicationPaused } from "@/lib/outbound/pause";
+import { OutboundPausedError } from "@/lib/outbound/service";
 import {
   confirmManualDropAndRetry,
   retryBatchTransfer,
@@ -51,12 +56,6 @@ const batchFormSchema = z.object({
   sourceLocalHint: z.string().trim().max(500),
 });
 
-const orderStatusSchema = z.object({
-  orderId: z.uuid(),
-  status: z.enum(ORDER_STATUSES),
-  cancelReason: z.string().trim().max(1000),
-});
-
 const batchStatusSchema = z.object({
   orderId: z.uuid(),
   batchId: z.uuid(),
@@ -68,6 +67,44 @@ const etaSchema = z.object({
   orderId: z.uuid(),
   eta: z.coerce.date(),
   note: z.string().trim().max(1000),
+  reason: z.string().trim().max(1000),
+});
+
+const optionalNullableQuantity = z.preprocess((value) => {
+  if (value === "" || value === null || value === undefined) return null;
+  return Number(value);
+}, z.number().int().positive().nullable());
+
+const orderDetailsSchema = z.object({
+  orderId: z.uuid(),
+  title: z.string().trim().min(1).max(500),
+  orderType: z.string().trim().min(1).max(200),
+  quantity: optionalNullableQuantity,
+  reason: z.string().trim().min(5).max(1000),
+});
+
+const approveSchema = z.object({
+  orderId: z.uuid(),
+  withEta: z.enum(["true", "false"]),
+  eta: z.preprocess((value) => {
+    if (value === "" || value === null || value === undefined) return undefined;
+    const parsed = new Date(String(value));
+    return Number.isNaN(parsed.getTime()) ? value : parsed;
+  }, z.date().optional()),
+});
+
+const querySchema = z.object({
+  orderId: z.uuid(),
+  queryText: z.string().trim().min(3).max(5000),
+});
+
+const orderIdSchema = z.object({
+  orderId: z.uuid(),
+});
+
+const pauseSchema = z.object({
+  orderId: z.uuid(),
+  paused: z.enum(["true", "false"]),
 });
 
 export type OrderActionState = { error: string | null };
@@ -75,11 +112,6 @@ export type OrderActionState = { error: string | null };
 const transferControlSchema = z.object({
   orderId: z.uuid(),
   batchId: z.uuid(),
-});
-
-const outboundApprovalSchema = z.object({
-  orderId: z.uuid(),
-  outboundEmailId: z.uuid(),
 });
 
 async function requireOrderWriter() {
@@ -187,25 +219,158 @@ export async function addBatchAction(
   return { error: null };
 }
 
-export async function setOrderStatusAction(
+export async function approveOrderAction(
   _previous: OrderActionState,
   formData: FormData,
 ): Promise<OrderActionState> {
   const user = await requireOrderWriter();
-  const parsed = orderStatusSchema.safeParse({
+  const parsed = approveSchema.safeParse({
     orderId: formData.get("orderId"),
-    status: formData.get("status"),
-    cancelReason: formData.get("cancelReason") ?? "",
+    withEta: formData.get("withEta"),
+    eta: formData.get("eta"),
   });
-  if (!parsed.success) {
-    return { error: "Choose a valid next order status." };
+  if (!parsed.success) return { error: "Choose a valid approval option." };
+  if (parsed.data.withEta === "true" && !parsed.data.eta) {
+    return { error: "Enter a future ETA to approve with ETA." };
   }
 
   try {
-    await setOrderStatus(prisma, {
+    await approveOrder(prisma, {
       orderId: parsed.data.orderId,
-      status: parsed.data.status,
-      ...(parsed.data.cancelReason ? { cancelReason: parsed.data.cancelReason } : {}),
+      ...(parsed.data.withEta === "true" && parsed.data.eta ? { eta: parsed.data.eta } : {}),
+      actor: { userId: user.userId, label: user.displayName },
+      correlationId: randomUUID(),
+    });
+  } catch {
+    return { error: "The order could not be approved in its current state." };
+  }
+
+  revalidatePath(`/orders/${parsed.data.orderId}`);
+  revalidatePath("/orders");
+  revalidatePath("/inbox");
+  return { error: null };
+}
+
+export async function sendQueryEmailAction(
+  _previous: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  const user = await requireOrderWriter();
+  const parsed = querySchema.safeParse({
+    orderId: formData.get("orderId"),
+    queryText: formData.get("queryText"),
+  });
+  if (!parsed.success) return { error: "Enter a query of at least a few characters." };
+
+  const env = parseServerEnv(process.env);
+  const order = await prisma.order.findUnique({
+    where: { id: parsed.data.orderId },
+    include: { client: true },
+  });
+  if (!order) return { error: "Order not found." };
+
+  const aiDraft = await AiOrchestrator.draftQueryReply(
+    {
+      clientDisplayName: order.client.displayName,
+      title: order.title,
+      orderCode: order.code,
+      queryText: parsed.data.queryText,
+    },
+    AiOrchestrator.aiConfigFromEnv(env),
+  );
+
+  try {
+    await sendQueryEmail(prisma, {
+      orderId: parsed.data.orderId,
+      queryText: parsed.data.queryText,
+      ...(aiDraft ? { rendered: aiDraft, aiModel: env.OLLAMA_MODEL } : {}),
+      actor: { userId: user.userId, label: user.displayName },
+      correlationId: randomUUID(),
+    });
+  } catch (error) {
+    if (error instanceof OutboundPausedError) {
+      return { error: "Communication is paused for this order. Resume before sending." };
+    }
+    return { error: "The query email could not be queued." };
+  }
+
+  revalidatePath(`/orders/${parsed.data.orderId}`);
+  revalidatePath("/inbox");
+  return { error: null };
+}
+
+export async function togglePauseAction(
+  _previous: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  const user = await requireOrderWriter();
+  const parsed = pauseSchema.safeParse({
+    orderId: formData.get("orderId"),
+    paused: formData.get("paused"),
+  });
+  if (!parsed.success) return { error: "Invalid pause request." };
+
+  try {
+    await setCommunicationPaused(prisma, {
+      orderId: parsed.data.orderId,
+      paused: parsed.data.paused === "true",
+      actor: { userId: user.userId, label: user.displayName },
+      correlationId: randomUUID(),
+    });
+  } catch {
+    return { error: "Pause state could not be changed." };
+  }
+
+  revalidatePath(`/orders/${parsed.data.orderId}`);
+  return { error: null };
+}
+
+export async function markReadyToUploadAction(
+  _previous: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  const user = await requireOrderWriter();
+  const parsed = orderIdSchema.safeParse({ orderId: formData.get("orderId") });
+  if (!parsed.success) return { error: "Invalid order." };
+
+  try {
+    await markReadyToUpload(prisma, {
+      orderId: parsed.data.orderId,
+      actor: { userId: user.userId, label: user.displayName },
+      correlationId: randomUUID(),
+    });
+  } catch {
+    return { error: "Ready to Upload is only available from In Production." };
+  }
+
+  revalidatePath(`/orders/${parsed.data.orderId}`);
+  revalidatePath("/orders");
+  return { error: null };
+}
+
+export async function updateOrderDetailsAction(
+  _previous: OrderActionState,
+  formData: FormData,
+): Promise<OrderActionState> {
+  const user = await requireOrderWriter();
+  const parsed = orderDetailsSchema.safeParse({
+    orderId: formData.get("orderId"),
+    title: formData.get("title"),
+    orderType: formData.get("orderType"),
+    quantity: formData.get("quantity"),
+    reason: formData.get("reason"),
+  });
+  if (!parsed.success) {
+    return { error: "Check the title, order type, quantity, and edit reason." };
+  }
+
+  try {
+    await updateOrderDetails(prisma, {
+      orderId: parsed.data.orderId,
+      title: parsed.data.title,
+      orderType: parsed.data.orderType,
+      quantity: parsed.data.quantity,
+      reason: parsed.data.reason,
       actor: {
         userId: user.userId,
         label: user.displayName,
@@ -213,7 +378,7 @@ export async function setOrderStatusAction(
       correlationId: randomUUID(),
     });
   } catch {
-    return { error: "That order status change is not allowed." };
+    return { error: "The order details could not be updated in the current state." };
   }
 
   revalidatePath(`/orders/${parsed.data.orderId}`);
@@ -264,24 +429,29 @@ export async function setEtaAction(
     orderId: formData.get("orderId"),
     eta: formData.get("eta"),
     note: formData.get("note") ?? "",
+    reason: formData.get("reason") ?? "",
   });
   if (!parsed.success) {
     return { error: "Enter a valid future ETA." };
   }
 
   try {
-    await setEta(prisma, {
+    await setOrderEta(prisma, {
       orderId: parsed.data.orderId,
       eta: parsed.data.eta,
       ...(parsed.data.note ? { note: parsed.data.note } : {}),
+      ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
       actor: {
         userId: user.userId,
         label: user.displayName,
       },
       correlationId: randomUUID(),
     });
-  } catch {
-    return { error: "The ETA must be in the future for an active order." };
+  } catch (error) {
+    if (error instanceof Error && /reason/i.test(error.message)) {
+      return { error: "Changing a locked ETA requires a reason of at least 5 characters." };
+    }
+    return { error: "The ETA must be in the future for an in-production order." };
   }
 
   revalidatePath(`/orders/${parsed.data.orderId}`);
@@ -352,46 +522,6 @@ export async function confirmManualDropAction(
     });
   } catch {
     return { error: "Manual drop can be confirmed only after a permanent download failure." };
-  }
-  revalidatePath(`/orders/${parsed.data.orderId}`);
-  return { error: null };
-}
-
-export async function approveOutboundEmailAction(
-  _previous: OrderActionState,
-  formData: FormData,
-): Promise<OrderActionState> {
-  const user = await requireOrderWriter();
-  const parsed = outboundApprovalSchema.safeParse({
-    orderId: formData.get("orderId"),
-    outboundEmailId: formData.get("outboundEmailId"),
-  });
-  if (!parsed.success) return { error: "The outbound draft selection is invalid." };
-
-  try {
-    const outbound = await prisma.outboundEmail.findFirst({
-      where: {
-        id: parsed.data.outboundEmailId,
-        orderId: parsed.data.orderId,
-      },
-      select: { id: true },
-    });
-    if (!outbound) return { error: "The outbound draft does not belong to this order." };
-    await approveOutboundEmail(prisma, {
-      outboundEmailId: outbound.id,
-      approvedById: user.userId,
-    });
-  } catch (error) {
-    if (error instanceof OutboundCopyGateError) {
-      return {
-        error:
-          "Approval is blocked until owner-approved client email copy replaces the placeholder.",
-      };
-    }
-    if (error instanceof OutboundStateError) {
-      return { error: error.message };
-    }
-    return { error: "The outbound email could not be approved." };
   }
   revalidatePath(`/orders/${parsed.data.orderId}`);
   return { error: null };

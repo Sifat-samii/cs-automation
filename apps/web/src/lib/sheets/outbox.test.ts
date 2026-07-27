@@ -108,6 +108,96 @@ describe("sheet mirror outbox", () => {
     await expect(claimPendingMirror(prisma)).resolves.toEqual([]);
   });
 
+  it("coalesces repeated PENDING enqueues for the same order", async () => {
+    const client = await seedClient();
+    const order = await createOrder(prisma, {
+      clientId: client.id,
+      title: "FN 02-20-26_Zea",
+      orderType: "Retouching",
+      quantity: 210,
+      actor,
+      correlationId: "22222222-2222-4222-8222-222222222222",
+      createdAt: new Date("2026-02-23T12:00:00.000Z"),
+      backupRoot: env.BACKUP_ROOT_UNC,
+      productionRoot: env.PRODUCTION_ROOT_UNC,
+    });
+
+    await enqueueSheetMirror(prisma, {
+      orderId: order.id,
+      correlationId: "77777777-7777-4777-8777-777777777777",
+    });
+    await prisma.order.update({
+      where: { id: order.id },
+      data: { title: "FN 02-20-26_Zea_v2", quantity: 211 },
+    });
+    await enqueueSheetMirror(prisma, {
+      orderId: order.id,
+      correlationId: "88888888-8888-4888-8888-888888888888",
+    });
+
+    await expect(prisma.sheetMirrorOutbox.count({ where: { orderId: order.id } })).resolves.toBe(1);
+    await expect(
+      prisma.sheetMirrorOutbox.findFirstOrThrow({ where: { orderId: order.id } }),
+    ).resolves.toMatchObject({
+      status: "PENDING",
+      payload: expect.objectContaining({
+        "Order Name": "FN 02-20-26_Zea_v2",
+        Quantity: "211",
+      }),
+    });
+  });
+
+  it("claims only the latest PENDING row when the same order was enqueued twice", async () => {
+    const client = await seedClient("Dup", "DUP");
+    const order = await createOrder(prisma, {
+      clientId: client.id,
+      title: "Dup order",
+      orderType: "Retouching",
+      quantity: 1,
+      actor,
+      correlationId: "99999999-9999-4999-8999-999999999999",
+      createdAt: new Date("2026-02-23T12:00:00.000Z"),
+      backupRoot: env.BACKUP_ROOT_UNC,
+      productionRoot: env.PRODUCTION_ROOT_UNC,
+    });
+    // Force a historical duplicate PENDING that predated coalescing.
+    await prisma.sheetMirrorOutbox.create({
+      data: {
+        orderId: order.id,
+        operation: "UPSERT",
+        status: "PENDING",
+        payload: {
+          Date: "23/02/2026",
+          Client: "Dup",
+          "Order Name": "Dup order older",
+          Quantity: "1",
+          orderCode: order.code,
+          placementGroup: "x",
+        },
+      },
+    });
+    await prisma.order.update({
+      where: { id: order.id },
+      data: { title: "Dup order newer" },
+    });
+    await enqueueSheetMirror(prisma, {
+      orderId: order.id,
+      correlationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+
+    const claims = await claimPendingMirror(prisma, 10);
+    expect(claims).toHaveLength(1);
+    expect(claims[0]).toMatchObject({
+      orderId: order.id,
+      row: expect.objectContaining({ "Order Name": "Dup order newer" }),
+    });
+    await expect(
+      prisma.sheetMirrorOutbox.count({
+        where: { orderId: order.id, status: "DONE", providerRowKey: { startsWith: "superseded:" } },
+      }),
+    ).resolves.toBe(1);
+  });
+
   it("marks DONE idempotently with providerRowKey", async () => {
     const client = await seedClient("Yeti", "YETI");
     const order = await createOrder(prisma, {

@@ -35,18 +35,24 @@ describe("email ingest service", () => {
     await prisma.$disconnect();
   });
 
-  it("creates one inbound message, pending proposal, and system-approved receipt", async () => {
+  it("auto-creates an UNASSIGNED order, accepts the proposal, and system-approves receipt", async () => {
     const result = await ingestEmail(prisma, input);
     expect(result.duplicate).toBe(false);
     expect(result.receiptOutboundEmailId).not.toBeNull();
+    expect(result.orchestration?.orderId).toBeTruthy();
+    expect(result.orchestration?.batchId).toBeTruthy();
+    expect(result.orchestration?.classification?.intent).toBe("ORDER");
     await expect(prisma.emailMessage.count()).resolves.toBe(1);
     await expect(
       prisma.proposal.findUniqueOrThrow({ where: { id: result.proposalId } }),
     ).resolves.toMatchObject({
       kind: "CREATE_ORDER",
       source: "RULE",
-      status: "PENDING",
+      status: "ACCEPTED",
     });
+    await expect(
+      prisma.order.findUniqueOrThrow({ where: { id: result.orchestration!.orderId! } }),
+    ).resolves.toMatchObject({ status: "UNASSIGNED" });
     await expect(
       prisma.outboundEmail.findUniqueOrThrow({
         where: { id: result.receiptOutboundEmailId ?? "" },
@@ -55,7 +61,6 @@ describe("email ingest service", () => {
       template: "RECEIPT_ACKNOWLEDGEMENT",
       status: "APPROVED",
       approvedById: null,
-      orderId: null,
       emailMessageId: result.emailMessageId,
     });
   });
@@ -63,10 +68,16 @@ describe("email ingest service", () => {
   it("returns the existing identifiers on replay without creating another proposal", async () => {
     const first = await ingestEmail(prisma, input);
     const second = await ingestEmail(prisma, input);
-    expect(second).toEqual({ ...first, duplicate: true });
+    expect(second).toEqual({
+      emailMessageId: first.emailMessageId,
+      proposalId: first.proposalId,
+      receiptOutboundEmailId: first.receiptOutboundEmailId,
+      duplicate: true,
+      orchestration: null,
+    });
     await expect(prisma.emailMessage.count()).resolves.toBe(1);
     await expect(prisma.proposal.count()).resolves.toBe(1);
-    await expect(prisma.outboundEmail.count()).resolves.toBe(1);
+    await expect(prisma.order.count()).resolves.toBe(1);
   });
 
   it("preserves idempotency under concurrent delivery", async () => {
@@ -74,6 +85,6 @@ describe("email ingest service", () => {
     expect(results.filter((result) => result.duplicate)).toHaveLength(1);
     await expect(prisma.emailMessage.count()).resolves.toBe(1);
     await expect(prisma.proposal.count()).resolves.toBe(1);
-    await expect(prisma.outboundEmail.count()).resolves.toBe(1);
+    await expect(prisma.order.count()).resolves.toBe(1);
   });
 });

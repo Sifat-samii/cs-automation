@@ -9,7 +9,7 @@ const actor = {
 };
 const correlationId = "22222222-2222-4222-8222-222222222222";
 
-async function createOrder(status: "DRAFT" | "IN_PRODUCTION" | "CANCELLED") {
+async function createOrder(status: "UNASSIGNED" | "IN_PRODUCTION" | "READY_TO_UPLOAD") {
   await prisma.user.create({
     data: {
       id: actor.userId,
@@ -58,8 +58,8 @@ describe("addBatch", () => {
     await prisma.$disconnect();
   });
 
-  it("refuses to add a batch to a cancelled order", async () => {
-    const order = await createOrder("CANCELLED");
+  it("refuses to add a batch to a ready-to-upload order", async () => {
+    const order = await createOrder("READY_TO_UPLOAD");
 
     await expect(
       addBatch(prisma, {

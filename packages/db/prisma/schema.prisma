@@ -18,13 +18,9 @@ enum ClientIdentityKind {
 }
 
 enum OrderStatus {
-  DRAFT
-  ACKNOWLEDGED
-  AWAITING_ETA
-  ETA_SENT
+  UNASSIGNED
   IN_PRODUCTION
-  CLOSED
-  CANCELLED
+  READY_TO_UPLOAD
 }
 
 enum OrderBatchKind {
@@ -114,6 +110,10 @@ enum OutboundTemplate {
   RECEIPT_ACKNOWLEDGEMENT
   FILES_VERIFIED
   ETA_NOTICE
+  ORDER_CONFIRMATION
+  ETA_UPDATE
+  CONVERSATION_REPLY
+  QUERY_REPLY
 }
 
 enum OutboundEmailStatus {
@@ -138,12 +138,14 @@ model User {
   sessions                    Session[]
   auditEvents                 AuditEvent[]
   ordersCreated               Order[]       @relation("OrderCreatedBy")
+  ordersApproved              Order[]       @relation("OrderApprovedBy")
   batchesCreated              OrderBatch[]  @relation("OrderBatchCreatedBy")
   manualDropConfirmations     OrderBatch[]  @relation("OrderBatchManualDropConfirmedBy")
   sourceLinksAdded            SourceLink[]  @relation("SourceLinkAddedBy")
   orderEvents                 OrderEvent[]   @relation("OrderEventActor")
   proposalsDecided            Proposal[]     @relation("ProposalDecidedBy")
   outboundEmailsApproved      OutboundEmail[] @relation("OutboundEmailApprovedBy")
+  mailThreadsPaused           MailThreadState[] @relation("MailThreadPausedBy")
 }
 
 model Session {
@@ -202,25 +204,33 @@ model ClientIdentity {
 }
 
 model Order {
-  id             String      @id @default(uuid()) @db.Uuid
-  code           String      @unique
-  clientId       String      @db.Uuid
-  client         Client      @relation(fields: [clientId], references: [id])
-  title          String
-  orderType      String
-  quantity       Int?
-  status         OrderStatus @default(DRAFT)
-  eta            DateTime?   @db.Timestamptz(6)
-  etaNote        String?
-  gmailThreadId  String?     @unique
-  folderName     String
-  backupPath     String
-  productionPath String
-  cancelReason   String?
-  createdById    String      @db.Uuid
-  createdBy      User        @relation("OrderCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt      DateTime    @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime    @updatedAt @db.Timestamptz(6)
+  id                   String      @id @default(uuid()) @db.Uuid
+  code                 String      @unique
+  clientId             String      @db.Uuid
+  client               Client      @relation(fields: [clientId], references: [id])
+  title                String
+  orderType            String
+  quantity             Int?
+  status               OrderStatus @default(UNASSIGNED)
+  eta                  DateTime?   @db.Timestamptz(6)
+  etaNote              String?
+  etaLockedAt          DateTime?   @db.Timestamptz(6)
+  etaSentAt            DateTime?   @db.Timestamptz(6)
+  etaChangeReason      String?
+  communicationPaused  Boolean     @default(false)
+  detailsLocked        Boolean     @default(true)
+  approvedAt           DateTime?   @db.Timestamptz(6)
+  approvedById         String?     @db.Uuid
+  approvedBy           User?       @relation("OrderApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  gmailThreadId        String?     @unique
+  folderName           String
+  backupPath           String
+  productionPath       String
+  cancelReason         String?
+  createdById          String      @db.Uuid
+  createdBy            User        @relation("OrderCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt            DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime    @updatedAt @db.Timestamptz(6)
 
   batches OrderBatch[]
   events  OrderEvent[]
@@ -231,6 +241,7 @@ model Order {
   @@index([status])
   @@index([clientId, createdAt])
   @@index([createdById])
+  @@index([approvedById])
 }
 
 model OrderBatch {
@@ -386,6 +397,8 @@ model OutboundEmail {
   template        OutboundTemplate
   renderedSubject String
   renderedBody    String
+  bodySource      String              @default("TEMPLATE")
+  aiModel         String?
   status          OutboundEmailStatus @default(DRAFT)
   approvedById    String?             @db.Uuid
   approvedBy      User?               @relation("OutboundEmailApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
@@ -401,6 +414,22 @@ model OutboundEmail {
   @@index([orderId, template])
   @@index([emailMessageId])
   @@index([approvedById])
+  @@index([gmailThreadId])
+}
+
+model MailThreadState {
+  id            String    @id @default(uuid()) @db.Uuid
+  gmailThreadId String    @unique
+  paused        Boolean   @default(false)
+  pausedById    String?   @db.Uuid
+  pausedBy      User?     @relation("MailThreadPausedBy", fields: [pausedById], references: [id], onDelete: Restrict)
+  pausedAt      DateTime? @db.Timestamptz(6)
+  resumedAt     DateTime? @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([paused])
+  @@index([pausedById])
 }
 
 enum SheetMirrorOperation {

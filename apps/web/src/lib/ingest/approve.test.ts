@@ -29,15 +29,19 @@ async function createFixtures(): Promise<{ proposalId: string }> {
       identities: { create: { kind: "DOMAIN", value: "example.com" } },
     },
   });
-  const ingested = await ingestEmail(prisma, {
-    gmailMessageId: "gmail-message-1",
-    gmailThreadId: "gmail-thread-1",
-    fromAddress: "buyer@example.com",
-    toAddresses: ["cs@example.test"],
-    subject: "Spring drop",
-    bodyText: "https://www.dropbox.com/s/abc/files.zip?dl=0",
-    receivedAt: now,
-  });
+  const ingested = await ingestEmail(
+    prisma,
+    {
+      gmailMessageId: "gmail-message-1",
+      gmailThreadId: "gmail-thread-1",
+      fromAddress: "buyer@example.com",
+      toAddresses: ["cs@example.test"],
+      subject: "Spring drop",
+      bodyText: "https://www.dropbox.com/s/abc/files.zip?dl=0",
+      receivedAt: now,
+    },
+    { orchestrate: false },
+  );
   return { proposalId: ingested.proposalId };
 }
 
@@ -80,6 +84,7 @@ describe("atomic proposal approval", () => {
     await expect(
       prisma.order.findUniqueOrThrow({ where: { id: result.orderId ?? "" } }),
     ).resolves.toMatchObject({
+      status: "UNASSIGNED",
       eta: new Date("2026-07-29T09:00:00.000Z"),
       gmailThreadId: "gmail-thread-1",
     });

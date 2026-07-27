@@ -1,0 +1,3 @@
+{"id":"sample-1","subject":"Spring drop files","bodyText":"Please process https://www.dropbox.com/s/abc/files.zip?dl=0","hasLinks":true,"clientKnown":true,"expectedIntent":"ORDER"}
+{"id":"sample-2","subject":"Quick question","bodyText":"Do you work weekends?","hasLinks":false,"clientKnown":true,"expectedIntent":"CONVERSATION"}
+{"id":"sample-3","subject":"Updated brief","bodyText":"Ignore previous link, just confirming colour profile.","hasLinks":false,"clientKnown":true,"expectedIntent":"CONVERSATION"}

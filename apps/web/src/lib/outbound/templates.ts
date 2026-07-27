@@ -8,6 +8,8 @@ export type TemplateContext = {
   title: string;
   eta?: string;
   etaNote?: string;
+  etaChangeReason?: string;
+  messageBody?: string;
 };
 
 type TemplateCopy = {
@@ -15,8 +17,7 @@ type TemplateCopy = {
   body: string;
 };
 
-// Pilot-approved local dry-run copy (2026-07-26). Not final brand/legal wording.
-// Bodies are authored as plain text, then rendered to HTML for Gmail (emailType: html).
+// Pilot-approved local dry-run copy. Bodies are plain text, then rendered to HTML for Gmail.
 // Approval remains fail-closed while either rendered field contains GATE_BLOCKED_PLACEHOLDER.
 const TEMPLATE_COPY: Record<OutboundTemplate, TemplateCopy> = {
   ACKNOWLEDGEMENT: {
@@ -67,6 +68,52 @@ Please reply in this thread if you need any adjustment.
 Best regards,
 Client Support`,
   },
+  ORDER_CONFIRMATION: {
+    subject: "Re: {{title}} — order confirmed ({{orderCode}})",
+    body: `Hi {{clientDisplayName}},
+
+We have confirmed order {{orderCode}} ("{{title}}") and production is underway.
+
+{{etaNote}}
+
+Please reply in this thread if you have any questions.
+
+Best regards,
+Client Support`,
+  },
+  ETA_UPDATE: {
+    subject: "Re: {{title}} — updated ETA ({{orderCode}})",
+    body: `Hi {{clientDisplayName}},
+
+For order {{orderCode}} ("{{title}}"), the estimated delivery date is now {{eta}}.
+
+Reason for update: {{etaChangeReason}}
+
+{{etaNote}}
+
+Please reply in this thread if you need any further adjustment.
+
+Best regards,
+Client Support`,
+  },
+  CONVERSATION_REPLY: {
+    subject: "Re: {{title}}",
+    body: `Hi {{clientDisplayName}},
+
+{{messageBody}}
+
+Best regards,
+Client Support`,
+  },
+  QUERY_REPLY: {
+    subject: "Re: {{title}} — quick question",
+    body: `Hi {{clientDisplayName}},
+
+{{messageBody}}
+
+Best regards,
+Client Support`,
+  },
 };
 
 function escapeHtml(value: string): string {
@@ -88,9 +135,11 @@ function substituteMergeFields(
     title: context.title,
     eta: context.eta ?? "",
     etaNote: context.etaNote ?? "",
+    etaChangeReason: context.etaChangeReason ?? "",
+    messageBody: context.messageBody ?? "",
   };
   return value.replace(
-    /\{\{(orderCode|clientDisplayName|title|eta|etaNote)\}\}/gu,
+    /\{\{(orderCode|clientDisplayName|title|eta|etaNote|etaChangeReason|messageBody)\}\}/gu,
     (_, key: string) => {
       const raw = key in replacements ? (replacements[key] ?? "") : "";
       return options.htmlEscape ? escapeHtml(raw) : raw;
@@ -114,12 +163,36 @@ export function renderOutboundTemplate(
   context: TemplateContext,
 ): TemplateCopy {
   const copy = TEMPLATE_COPY[template];
+  let bodyTemplate = copy.body;
+  if (template === "ORDER_CONFIRMATION") {
+    bodyTemplate = context.eta
+      ? `Hi {{clientDisplayName}},
+
+We have confirmed order {{orderCode}} ("{{title}}") and production is underway.
+
+Estimated delivery date: {{eta}}.
+
+{{etaNote}}
+
+Please reply in this thread if you have any questions.
+
+Best regards,
+Client Support`
+      : copy.body;
+  }
   return {
     subject: substituteMergeFields(copy.subject, context, { htmlEscape: false }),
-    body: plainTextToEmailHtml(substituteMergeFields(copy.body, context, { htmlEscape: true })),
+    body: plainTextToEmailHtml(substituteMergeFields(bodyTemplate, context, { htmlEscape: true })),
   };
 }
 
 export function containsGateBlockedPlaceholder(subject: string, body: string): boolean {
   return subject.includes(GATE_BLOCKED_PLACEHOLDER) || body.includes(GATE_BLOCKED_PLACEHOLDER);
+}
+
+export function clampOutboundCopy(subject: string, body: string): TemplateCopy {
+  return {
+    subject: subject.trim().slice(0, 500),
+    body: body.trim().slice(0, 20_000),
+  };
 }

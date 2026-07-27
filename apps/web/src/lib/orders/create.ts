@@ -1,6 +1,7 @@
 import { Prisma, type DbClient, type PrismaClient } from "@cs/db";
 import { assertPathBudget, buildOrderCode, buildOrderFolderName, joinUncPath } from "@cs/shared";
 import { recordAudit } from "@/lib/audit";
+import { queueBatchTransfer } from "@/lib/agent/pipeline";
 import { enqueueSheetMirror } from "@/lib/sheets/outbox";
 
 const MAX_SEQUENCE_RETRIES = 3;
@@ -156,7 +157,7 @@ export async function createOrderInTransaction(db: DbClient, input: CreateOrderI
       orderId: order.id,
       batchId: batch.id,
       type: "order.created",
-      payload: { code, status: "DRAFT" },
+      payload: { code, status: "UNASSIGNED" },
       actorUserId: input.actor.userId,
       actorLabel: input.actor.label,
       correlationId: input.correlationId,
@@ -175,6 +176,13 @@ export async function createOrderInTransaction(db: DbClient, input: CreateOrderI
     orderId: order.id,
     correlationId: input.correlationId,
   });
+
+  if (sourceLinks.length > 0) {
+    await queueBatchTransfer(db, {
+      batchId: batch.id,
+      correlationId: input.correlationId,
+    });
+  }
 
   return order;
 }

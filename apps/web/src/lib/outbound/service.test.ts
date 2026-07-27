@@ -1,10 +1,10 @@
 import { prisma } from "@cs/db";
 import { resetDatabase } from "@cs/db/testing";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { setEta } from "@/lib/orders/lifecycle";
 import {
   approveOutboundEmail,
   draftOutboundEmail,
+  requeueOutboundAfterTransportFailure,
   claimPendingOutbound,
   markOutboundSent,
   OutboundStateError,
@@ -260,6 +260,37 @@ describe("outbound email service", () => {
     });
   });
 
+  it("requeues SENDING rows without a provider message id after transport failure", async () => {
+    const { orderId } = await createFixtures();
+    const approved = await prisma.outboundEmail.create({
+      data: {
+        orderId,
+        template: "FILES_VERIFIED",
+        renderedSubject: "Approved subject",
+        renderedBody: "Approved body",
+        status: "APPROVED",
+        approvedById: actorUserId,
+        approvedAt: new Date("2026-07-26T13:00:00.000Z"),
+        idempotencyKey: "verified:requeue",
+        gmailThreadId: "gmail-thread-1",
+      },
+    });
+    await expect(claimPendingOutbound(prisma)).resolves.toHaveLength(1);
+
+    const requeued = await requeueOutboundAfterTransportFailure(prisma, {
+      outboundEmailId: approved.id,
+      error: "Gmail API timeout",
+    });
+    expect(requeued).toMatchObject({
+      status: "APPROVED",
+      sentMessageId: null,
+      lastError: "Gmail API timeout",
+    });
+    await expect(claimPendingOutbound(prisma)).resolves.toEqual([
+      expect.objectContaining({ id: approved.id, status: "SENDING" }),
+    ]);
+  });
+
   it("cannot mark a draft sent and marks an approved row sent idempotently", async () => {
     const { orderId } = await createFixtures();
     const draft = await draftOutboundEmail(prisma, {
@@ -307,75 +338,30 @@ describe("outbound email service", () => {
     ).rejects.toBeInstanceOf(OutboundStateError);
   });
 
-  it("advances a verified intake from DRAFT to AWAITING_ETA after acknowledgement is sent", async () => {
+  it("skips claiming outbound mail while the thread is paused", async () => {
     const { orderId } = await createFixtures();
-    await prisma.orderBatch.create({
-      data: {
-        orderId,
-        sequence: 1,
-        kind: "INITIAL",
-        status: "VERIFIED",
-        subfolder: "01_INITIAL",
-        createdById: actorUserId,
-      },
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { communicationPaused: true },
     });
-    const acknowledgement = await prisma.outboundEmail.create({
+    await prisma.mailThreadState.create({
+      data: { gmailThreadId: "gmail-thread-1", paused: true },
+    });
+    await prisma.outboundEmail.create({
       data: {
         orderId,
-        template: "ACKNOWLEDGEMENT",
-        renderedSubject: "Approved acknowledgement",
-        renderedBody: "Approved acknowledgement",
+        template: "ORDER_CONFIRMATION",
+        renderedSubject: "Confirmed",
+        renderedBody: "Confirmed",
         status: "APPROVED",
-        approvedById: actorUserId,
         approvedAt: new Date("2026-07-26T13:00:00.000Z"),
-        idempotencyKey: "ack:approved",
+        idempotencyKey: "confirm:paused",
         gmailThreadId: "gmail-thread-1",
       },
     });
-    await expect(claimPendingOutbound(prisma)).resolves.toHaveLength(1);
-    await markOutboundSent(prisma, {
-      outboundEmailId: acknowledgement.id,
-      sentMessageId: "gmail-ack-1",
-    });
-
-    await expect(prisma.order.findUniqueOrThrow({ where: { id: orderId } })).resolves.toMatchObject(
-      { status: "AWAITING_ETA" },
-    );
+    await expect(claimPendingOutbound(prisma)).resolves.toHaveLength(0);
     await expect(
-      prisma.orderEvent.findMany({
-        where: { orderId, type: "order.status_changed" },
-        orderBy: { occurredAt: "asc" },
-        select: { payload: true },
-      }),
-    ).resolves.toEqual([
-      {
-        payload: expect.objectContaining({
-          from: "DRAFT",
-          to: "ACKNOWLEDGED",
-          reason: "acknowledgement_sent",
-        }),
-      },
-      {
-        payload: expect.objectContaining({
-          from: "ACKNOWLEDGED",
-          to: "AWAITING_ETA",
-          reason: "acknowledgement_sent_after_files_verified",
-        }),
-      },
-    ]);
-
-    const eta = new Date("2026-07-29T09:00:00.000Z");
-    await setEta(prisma, {
-      orderId,
-      eta,
-      actor: { userId: actorUserId, label: "Sifat Sami" },
-      correlationId: "22222222-2222-4222-8222-222222222222",
-      now: new Date("2026-07-26T12:00:00.000Z"),
-    });
-    await expect(
-      prisma.outboundEmail.findUniqueOrThrow({
-        where: { idempotencyKey: `eta:${orderId}:${eta.toISOString()}` },
-      }),
-    ).resolves.toMatchObject({ template: "ETA_NOTICE", status: "DRAFT" });
+      prisma.outboundEmail.findUniqueOrThrow({ where: { idempotencyKey: "confirm:paused" } }),
+    ).resolves.toMatchObject({ status: "APPROVED" });
   });
 });

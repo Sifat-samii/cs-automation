@@ -1,12 +1,4 @@
-export const ORDER_STATUSES = [
-  "DRAFT",
-  "ACKNOWLEDGED",
-  "AWAITING_ETA",
-  "ETA_SENT",
-  "IN_PRODUCTION",
-  "CLOSED",
-  "CANCELLED",
-] as const;
+export const ORDER_STATUSES = ["UNASSIGNED", "IN_PRODUCTION", "READY_TO_UPLOAD"] as const;
 
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
@@ -38,13 +30,9 @@ export class IllegalTransitionError extends Error {
 }
 
 const ORDER_TRANSITIONS = {
-  DRAFT: ["ACKNOWLEDGED", "CANCELLED"],
-  ACKNOWLEDGED: ["AWAITING_ETA", "ETA_SENT", "CANCELLED"],
-  AWAITING_ETA: ["ETA_SENT", "CANCELLED"],
-  ETA_SENT: ["IN_PRODUCTION", "CANCELLED"],
-  IN_PRODUCTION: ["CLOSED", "CANCELLED"],
-  CLOSED: [],
-  CANCELLED: [],
+  UNASSIGNED: ["IN_PRODUCTION"],
+  IN_PRODUCTION: ["READY_TO_UPLOAD"],
+  READY_TO_UPLOAD: [],
 } as const satisfies Record<OrderStatus, readonly OrderStatus[]>;
 
 const BATCH_TRANSITIONS = {

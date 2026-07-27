@@ -11,17 +11,8 @@ import {
 import type { BatchStatus, OrderStatus } from "./lifecycle.js";
 
 const legalOrderTransitions = [
-  ["DRAFT", "ACKNOWLEDGED"],
-  ["DRAFT", "CANCELLED"],
-  ["ACKNOWLEDGED", "AWAITING_ETA"],
-  ["ACKNOWLEDGED", "ETA_SENT"],
-  ["ACKNOWLEDGED", "CANCELLED"],
-  ["AWAITING_ETA", "ETA_SENT"],
-  ["AWAITING_ETA", "CANCELLED"],
-  ["ETA_SENT", "IN_PRODUCTION"],
-  ["ETA_SENT", "CANCELLED"],
-  ["IN_PRODUCTION", "CLOSED"],
-  ["IN_PRODUCTION", "CANCELLED"],
+  ["UNASSIGNED", "IN_PRODUCTION"],
+  ["IN_PRODUCTION", "READY_TO_UPLOAD"],
 ] as const satisfies readonly (readonly [OrderStatus, OrderStatus])[];
 
 const legalBatchTransitions = [
@@ -51,10 +42,10 @@ describe("order lifecycle", () => {
   });
 
   it.each([
-    ["CLOSED", "DRAFT"],
-    ["CANCELLED", "DRAFT"],
-    ["DRAFT", "IN_PRODUCTION"],
-    ["AWAITING_ETA", "ACKNOWLEDGED"],
+    ["READY_TO_UPLOAD", "UNASSIGNED"],
+    ["READY_TO_UPLOAD", "IN_PRODUCTION"],
+    ["UNASSIGNED", "READY_TO_UPLOAD"],
+    ["IN_PRODUCTION", "UNASSIGNED"],
   ] as const satisfies readonly (readonly [OrderStatus, OrderStatus])[])(
     "%s -> %s is illegal",
     (from, to) => {

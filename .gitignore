@@ -42,6 +42,8 @@ pnpm-debug.log*
 .idea/
 .vscode/
 .cursor/
+.agents/
+.superpowers/
 
 # Operating-system files
 .DS_Store

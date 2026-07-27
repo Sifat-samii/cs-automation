@@ -179,6 +179,7 @@ export async function approveProposal(
       await transaction.order.update({
         where: { id: order.id },
         data: {
+          status: "UNASSIGNED",
           gmailThreadId: proposal.emailMessage.gmailThreadId,
           ...(input.overrides?.eta ? { eta: input.overrides.eta } : {}),
         },

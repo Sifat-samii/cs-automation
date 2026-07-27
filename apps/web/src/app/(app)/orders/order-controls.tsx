@@ -1,19 +1,12 @@
 "use client";
 
-import {
-  BATCH_STATUSES,
-  ORDER_STATUSES,
-  batchTransition,
-  orderTransition,
-  type BatchStatus,
-  type OrderStatus,
-} from "@cs/shared/lifecycle";
 import { useActionState } from "react";
 import {
   addBatchAction,
-  setBatchStatusAction,
+  markReadyToUploadAction,
   setEtaAction,
-  setOrderStatusAction,
+  togglePauseAction,
+  updateOrderDetailsAction,
   type OrderActionState,
 } from "@/app/(app)/orders/actions";
 import { SubmitButton } from "@/app/(app)/_components/submit-button";
@@ -28,50 +21,75 @@ function ActionError({ error }: OrderActionState) {
   );
 }
 
-export function OrderStatusForm({ orderId, status }: { orderId: string; status: OrderStatus }) {
-  const [state, action] = useActionState(setOrderStatusAction, initialState);
-  const nextStatuses = ORDER_STATUSES.filter((next) => orderTransition(status, next));
-  if (nextStatuses.length === 0) {
-    return <p className="text-sm text-slate-500">This order is terminal.</p>;
-  }
-
+export function EditOrderDetailsForm({
+  orderId,
+  title,
+  orderType,
+  quantity,
+}: {
+  orderId: string;
+  title: string;
+  orderType: string;
+  quantity: string | null;
+}) {
+  const [state, action] = useActionState(updateOrderDetailsAction, initialState);
   return (
     <form action={action} className="space-y-3">
       <input type="hidden" name="orderId" value={orderId} />
       <label className="block space-y-1 text-sm font-medium text-slate-700">
-        Next status
-        <select
-          name="status"
-          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-        >
-          {nextStatuses.map((next) => (
-            <option key={next} value={next}>
-              {next.replaceAll("_", " ")}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="block space-y-1 text-sm font-medium text-slate-700">
-        Cancellation reason, if applicable
+        Title
         <input
-          name="cancelReason"
-          maxLength={1000}
+          name="title"
+          required
+          maxLength={500}
+          defaultValue={title}
           className="w-full rounded-lg border border-slate-300 px-3 py-2"
         />
       </label>
+      <label className="block space-y-1 text-sm font-medium text-slate-700">
+        Order type
+        <input
+          name="orderType"
+          required
+          maxLength={200}
+          defaultValue={orderType}
+          className="w-full rounded-lg border border-slate-300 px-3 py-2"
+        />
+      </label>
+      <label className="block space-y-1 text-sm font-medium text-slate-700">
+        Quantity
+        <input
+          name="quantity"
+          type="number"
+          min={1}
+          defaultValue={quantity ?? ""}
+          className="w-full rounded-lg border border-slate-300 px-3 py-2"
+        />
+      </label>
+      <label className="block space-y-1 text-sm font-medium text-slate-700">
+        Reason for emergency edit
+        <input
+          name="reason"
+          required
+          minLength={5}
+          maxLength={1000}
+          className="w-full rounded-lg border border-slate-300 px-3 py-2"
+          placeholder="Why is this edit necessary?"
+        />
+      </label>
       <ActionError error={state.error} />
-      <SubmitButton label="Update order status" pendingLabel="Updating status..." />
+      <SubmitButton label="Save emergency edit" pendingLabel="Saving..." />
     </form>
   );
 }
 
-export function EtaForm({ orderId }: { orderId: string }) {
+export function EtaForm({ orderId, etaLocked }: { orderId: string; etaLocked: boolean }) {
   const [state, action] = useActionState(setEtaAction, initialState);
   return (
     <form action={action} className="space-y-3">
       <input type="hidden" name="orderId" value={orderId} />
       <label className="block space-y-1 text-sm font-medium text-slate-700">
-        ETA
+        ETA (UTC)
         <input
           name="eta"
           type="datetime-local"
@@ -87,8 +105,59 @@ export function EtaForm({ orderId }: { orderId: string }) {
           className="w-full rounded-lg border border-slate-300 px-3 py-2"
         />
       </label>
+      {etaLocked ? (
+        <label className="block space-y-1 text-sm font-medium text-slate-700">
+          Reason for ETA change
+          <input
+            name="reason"
+            required
+            minLength={5}
+            maxLength={1000}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2"
+          />
+        </label>
+      ) : (
+        <input type="hidden" name="reason" value="" />
+      )}
       <ActionError error={state.error} />
-      <SubmitButton label="Set ETA" pendingLabel="Saving ETA..." />
+      <SubmitButton
+        label={etaLocked ? "Update locked ETA" : "Set ETA"}
+        pendingLabel="Saving ETA..."
+      />
+    </form>
+  );
+}
+
+export function PauseResumeForm({ orderId, paused }: { orderId: string; paused: boolean }) {
+  const [state, action] = useActionState(togglePauseAction, initialState);
+  return (
+    <form action={action} className="space-y-3">
+      <input type="hidden" name="orderId" value={orderId} />
+      <input type="hidden" name="paused" value={paused ? "false" : "true"} />
+      <p className="text-sm text-slate-600">
+        {paused
+          ? "Client email is paused. Transfers continue. Resume to allow outbound mail again."
+          : "Pause stops AI and workflow emails for this thread. Transfers continue."}
+      </p>
+      <ActionError error={state.error} />
+      <SubmitButton
+        label={paused ? "Resume Order" : "Pause Order"}
+        pendingLabel={paused ? "Resuming..." : "Pausing..."}
+      />
+    </form>
+  );
+}
+
+export function ReadyToUploadForm({ orderId }: { orderId: string }) {
+  const [state, action] = useActionState(markReadyToUploadAction, initialState);
+  return (
+    <form action={action} className="space-y-3">
+      <input type="hidden" name="orderId" value={orderId} />
+      <p className="text-sm text-slate-600">
+        Marks this order Ready to Upload. Upload delivery is configured in a later phase.
+      </p>
+      <ActionError error={state.error} />
+      <SubmitButton label="Ready to Upload" pendingLabel="Updating..." />
     </form>
   );
 }
@@ -99,14 +168,14 @@ export function AddBatchForm({ orderId }: { orderId: string }) {
     <form action={action} className="space-y-3">
       <input type="hidden" name="orderId" value={orderId} />
       <label className="block space-y-1 text-sm font-medium text-slate-700">
-        Batch kind
+        Kind
         <select
           name="kind"
           className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
         >
-          <option value="ADDITIONAL">Additional</option>
-          <option value="SAMPLE">Sample</option>
-          <option value="CORRECTION">Correction</option>
+          <option value="ADDITIONAL">ADDITIONAL</option>
+          <option value="SAMPLE">SAMPLE</option>
+          <option value="CORRECTION">CORRECTION</option>
         </select>
       </label>
       <label className="block space-y-1 text-sm font-medium text-slate-700">
@@ -121,22 +190,21 @@ export function AddBatchForm({ orderId }: { orderId: string }) {
         Source kind
         <select
           name="sourceKind"
-          defaultValue=""
           className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+          defaultValue=""
         >
-          <option value="">No source yet</option>
-          <option value="DROPBOX">Dropbox</option>
-          <option value="GDRIVE">Google Drive</option>
-          <option value="ATTACHMENT">Attachment</option>
-          <option value="MANUAL_DROP">Manual drop</option>
-          <option value="OTHER">Other</option>
+          <option value="">None</option>
+          <option value="DROPBOX">DROPBOX</option>
+          <option value="GDRIVE">GDRIVE</option>
+          <option value="ATTACHMENT">ATTACHMENT</option>
+          <option value="MANUAL_DROP">MANUAL_DROP</option>
+          <option value="OTHER">OTHER</option>
         </select>
       </label>
       <label className="block space-y-1 text-sm font-medium text-slate-700">
         Source URL
         <input
           name="sourceUrl"
-          type="url"
           maxLength={2048}
           className="w-full rounded-lg border border-slate-300 px-3 py-2"
         />
@@ -150,62 +218,7 @@ export function AddBatchForm({ orderId }: { orderId: string }) {
         />
       </label>
       <ActionError error={state.error} />
-      <SubmitButton label="Add batch" pendingLabel="Adding batch..." />
-    </form>
-  );
-}
-
-export function BatchStatusForm({
-  orderId,
-  batchId,
-  status,
-  hasTransferJobs,
-}: {
-  orderId: string;
-  batchId: string;
-  status: BatchStatus;
-  hasTransferJobs: boolean;
-}) {
-  const [state, action] = useActionState(setBatchStatusAction, initialState);
-  if (hasTransferJobs) {
-    return (
-      <p className="mt-4 border-t border-slate-200 pt-4 text-xs text-slate-500">
-        Batch status is controlled by the transfer pipeline.
-      </p>
-    );
-  }
-  const nextStatuses = BATCH_STATUSES.filter((next) => batchTransition(status, next));
-  if (nextStatuses.length === 0) {
-    return <p className="text-xs text-slate-500">Terminal batch</p>;
-  }
-
-  return (
-    <form action={action} className="mt-4 space-y-2 border-t border-slate-200 pt-4">
-      <input type="hidden" name="orderId" value={orderId} />
-      <input type="hidden" name="batchId" value={batchId} />
-      <label className="block space-y-1 text-xs font-medium text-slate-700">
-        Next batch status
-        <select
-          name="status"
-          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-        >
-          {nextStatuses.map((next) => (
-            <option key={next} value={next}>
-              {next.replaceAll("_", " ")}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="block space-y-1 text-xs font-medium text-slate-700">
-        Failure reason, if applicable
-        <input
-          name="failureReason"
-          maxLength={1000}
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
-      </label>
-      <ActionError error={state.error} />
-      <SubmitButton label="Update batch" pendingLabel="Updating batch..." className="w-full" />
+      <SubmitButton label="Add batch" pendingLabel="Adding..." />
     </form>
   );
 }

@@ -1,13 +1,13 @@
 # Implementation status
 
-| Phase | Name                | Branch                        | Status                          |
-| ----- | ------------------- | ----------------------------- | ------------------------------- |
-| 0     | Project foundation  | `feature/project-foundation`  | Complete                        |
-| 1     | Manual order intake | `feature/manual-order-intake` | Complete                        |
-| 2     | File agent          | `feature/file-agent`          | Complete; PR pending            |
-| 3     | Gmail integration   | local implementation tree     | Complete; activation gated      |
-| 4     | AI assistance       | `feature/ai-assistance`       | Deferred (after Phase 5 Wave A) |
-| 5     | Google Sheets sync  | `feature/google-sheets-sync`  | Wave A + Wave B complete        |
+| Phase | Name                  | Branch                        | Status                     |
+| ----- | --------------------- | ----------------------------- | -------------------------- |
+| 0     | Project foundation    | `feature/project-foundation`  | Complete                   |
+| 1     | Manual order intake   | `feature/manual-order-intake` | Complete                   |
+| 2     | File agent            | `feature/file-agent`          | Complete; PR pending       |
+| 3     | Gmail integration     | local implementation tree     | Complete; activation gated |
+| 4     | AI + workflow rewrite | `feature/client-folder-ux`    | Implemented; go-live gated |
+| 5     | Google Sheets sync    | `feature/google-sheets-sync`  | Wave A + Wave B complete   |
 
 ## Phase 0 checklist
 
@@ -153,9 +153,9 @@ interim only; cutover has not occurred.
   `FILES_VERIFIED` may be system-approved (ADR 0007); drafts that still contain
   `GATE_BLOCKED_PLACEHOLDER` cannot be human-approved; pending claims `APPROVED` rows with
   `approvedAt` set using `FOR UPDATE SKIP LOCKED`.
-- Lifecycle: a sent acknowledgement advances `DRAFT → ACKNOWLEDGED`; if files were already
-  verified without an ETA it continues to `AWAITING_ETA`, allowing the later ETA setter to draft
-  `ETA_NOTICE`.
+- Lifecycle (Phase 3 historical): acknowledgement and ETA notice flows advanced order status on
+  send. **Phase 4 supersedes this:** order status moves only via CS Approve / Ready to Upload;
+  ETA is a lockable tag; send never advances status.
 - Threading: pending outbound rows resolve the original inbound sender and expose the stored
   `gmailThreadId`; the send export passes that thread id to Gmail.
 - Workflow exports: both JSON files parse successfully and remain inactive with no OAuth token or
@@ -165,6 +165,27 @@ Phase 3 is implemented and locally verified at the user's direction. Pilot-appro
 templates are in place. Production activation remains blocked because n8n is not registered as a
 Windows service and shared-mailbox Gmail OAuth is not evidenced. Drafts that still contain
 `GATE_BLOCKED_PLACEHOLDER` remain fail-closed and cannot become `APPROVED`.
+
+## Phase 4 checklist
+
+- [x] Design spec + ADR 0009 (AI send under gates) + lifecycle CONTRACT update
+- [x] Three-status `OrderStatus` migration (`UNASSIGNED` / `IN_PRODUCTION` / `READY_TO_UPLOAD`)
+- [x] ETA lock/pause/approval fields + `MailThreadState` + AI env keys
+- [x] Outbound pre-rendered AI bodies, claim-time pause gate, ETA/approve/ready services
+- [x] Two-phase ingest with auto-create, receipt, download, loop/self-address guards
+- [x] CS decision panel (orders + inbox), query/pause/ready, ETA tags, Time Remaining
+- [x] Ollama classifier/drafts, safety guards, bake-off harness + benchmark doc
+- [x] Go-live runbook + n8n poll timeout docs
+- [ ] Operator activation: Ollama model pull, n8n OAuth, smoke sequence on real mail
+
+## Phase 4 notes
+
+- Branch: `feature/client-folder-ux`.
+- Email send no longer advances order status; CS Approve / Ready to Upload own transitions.
+- When `AI_ENABLED=false`, classification uses a deterministic stub (links → ORDER) for tests and
+  degraded local runs.
+- Path-budget / create failures on auto-create degrade to `NEEDS_HUMAN` without failing ingest HTTP.
+- Ready to Upload is a terminal stub; delivery/upload is out of scope.
 
 ## Phase 5 Wave A checklist
 
@@ -195,4 +216,4 @@ Windows service and shared-mailbox Gmail OAuth is not evidenced. Drafts that sti
 - **Client registration UX:** new clients no longer pick an unbound folder. `folderName` is derived from the display name; backup and production share folders are created at registration when missing. The clients table shows folder name + backup path with copy, and a row-click popup lists orders (no Remarks column).
 - Sheets is one-way from Postgres; Status/QC columns remain human-owned on the sheet.
 
-Last updated: 2026-07-26
+Last updated: 2026-07-27

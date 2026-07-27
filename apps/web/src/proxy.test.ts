@@ -18,7 +18,7 @@ describe("application proxy", () => {
     expect(response.headers.get("location")).toBeNull();
   });
 
-  it.each(["/api/ingest/email", "/api/outbound/pending"])(
+  it.each(["/api/ingest/email", "/api/outbound/pending", "/api/mirror/pending"])(
     "allows machine endpoint %s through without a browser session",
     (path) => {
       const response = proxy(new NextRequest(`http://localhost${path}`));

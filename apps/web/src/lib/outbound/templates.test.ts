@@ -79,4 +79,32 @@ describe("outbound templates", () => {
   it("detects gate-blocked placeholder text", () => {
     expect(containsGateBlockedPlaceholder(GATE_BLOCKED_PLACEHOLDER, "ok")).toBe(true);
   });
+
+  it("renders confirmation, ETA update, and query/conversation shells", () => {
+    const confirmation = renderOutboundTemplate("ORDER_CONFIRMATION", {
+      orderCode: "VRLY_260726_001",
+      clientDisplayName: "Verily",
+      title: "Spring Drop",
+      eta: "2026-07-29T00:00:00.000Z",
+    });
+    expect(confirmation.subject).toContain("order confirmed");
+    expect(confirmation.body).toContain("2026-07-29");
+
+    const update = renderOutboundTemplate("ETA_UPDATE", {
+      orderCode: "VRLY_260726_001",
+      clientDisplayName: "Verily",
+      title: "Spring Drop",
+      eta: "2026-07-30T00:00:00.000Z",
+      etaChangeReason: "Client requested later delivery",
+    });
+    expect(update.subject).toContain("updated ETA");
+    expect(update.body).toContain("Client requested later delivery");
+
+    const query = renderOutboundTemplate("QUERY_REPLY", {
+      clientDisplayName: "Verily",
+      title: "Spring Drop",
+      messageBody: "Could you confirm the quantity?",
+    });
+    expect(query.body).toContain("Could you confirm the quantity?");
+  });
 });

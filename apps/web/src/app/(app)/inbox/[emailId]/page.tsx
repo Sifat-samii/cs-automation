@@ -2,6 +2,7 @@ import { prisma, type Prisma } from "@cs/db";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ProposalReviewActions, type InboxReviewOptions } from "@/app/(app)/inbox/review-actions";
+import { OrderDecisionPanel } from "@/app/(app)/orders/order-decision-panel";
 import { requireUser } from "@/lib/auth/current-user";
 import { assertCan, can } from "@/lib/auth/rbac";
 
@@ -40,7 +41,7 @@ export default async function InboxDetailPage({
       where: { id: emailId },
       include: {
         client: true,
-        order: { select: { id: true, code: true, title: true } },
+        order: { select: { id: true, code: true, title: true, status: true } },
         proposals: { orderBy: { createdAt: "asc" } },
       },
     }),
@@ -50,7 +51,7 @@ export default async function InboxDetailPage({
       select: { id: true, code: true, displayName: true },
     }),
     prisma.order.findMany({
-      where: { status: { notIn: ["CLOSED", "CANCELLED"] } },
+      where: { status: { notIn: ["READY_TO_UPLOAD"] } },
       orderBy: { createdAt: "desc" },
       take: 250,
       select: { id: true, code: true, title: true },
@@ -142,6 +143,31 @@ export default async function InboxDetailPage({
           )}
         </article>
       </section>
+
+      {message.order ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-slate-950">Linked order</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {message.order.code} — {message.order.title}
+              </p>
+            </div>
+            <Link
+              href={`/orders/${message.order.id}`}
+              className="text-sm font-semibold text-indigo-700 hover:text-indigo-900"
+            >
+              Open order →
+            </Link>
+          </div>
+          {message.order.status === "UNASSIGNED" ? (
+            <div className="mt-5 border-t border-slate-100 pt-5">
+              <h3 className="mb-4 text-lg font-bold text-slate-950">CS decision</h3>
+              <OrderDecisionPanel orderId={message.order.id} />
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {proposal && proposal.status === "PENDING" && message.triageStatus === "UNREVIEWED" && (
         <section>

@@ -1,8 +1,12 @@
 import { prisma } from "@cs/db";
 import { resetDatabase } from "@cs/db/testing";
-import { IllegalTransitionError } from "@cs/shared";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { setBatchStatus, setEta, setOrderStatus } from "@/lib/orders/lifecycle";
+import {
+  approveOrder,
+  markReadyToUpload,
+  setOrderEta,
+  updateOrderDetails,
+} from "@/lib/orders/lifecycle";
 
 const actor = {
   userId: "11111111-1111-4111-8111-111111111111",
@@ -11,7 +15,7 @@ const actor = {
 const correlationId = "22222222-2222-4222-8222-222222222222";
 const now = new Date("2026-07-26T12:00:00.000Z");
 
-async function createOrderAndBatch() {
+async function createUnassignedOrder(options?: { withThread?: boolean }) {
   await prisma.user.create({
     data: {
       id: actor.userId,
@@ -34,25 +38,34 @@ async function createOrderAndBatch() {
       clientId: client.id,
       title: "Spring Drop",
       orderType: "Retouching",
+      status: "UNASSIGNED",
       folderName: "VRLY_260726_001__spring_drop",
       backupPath: "\\\\server\\backup\\Verily\\VRLY_260726_001__spring_drop",
       productionPath: "\\\\server\\production\\Verily\\VRLY_260726_001__spring_drop",
       createdById: actor.userId,
+      ...(options?.withThread ? { gmailThreadId: "thread-1" } : {}),
     },
   });
-  const batch = await prisma.orderBatch.create({
-    data: {
-      orderId: order.id,
-      sequence: 1,
-      kind: "INITIAL",
-      subfolder: "01_INITIAL",
-      createdById: actor.userId,
-    },
-  });
-  return { order, batch };
+  if (options?.withThread) {
+    await prisma.emailMessage.create({
+      data: {
+        gmailMessageId: "msg-1",
+        gmailThreadId: "thread-1",
+        direction: "INBOUND",
+        fromAddress: "buyer@example.com",
+        toAddresses: ["cs@example.test"],
+        subject: "Spring Drop",
+        bodyText: "files please",
+        receivedAt: now,
+        orderId: order.id,
+        clientId: client.id,
+      },
+    });
+  }
+  return { order, client };
 }
 
-describe("order and batch lifecycle services", () => {
+describe("phase 4 order lifecycle services", () => {
   beforeEach(async () => {
     await resetDatabase(prisma);
   });
@@ -61,139 +74,119 @@ describe("order and batch lifecycle services", () => {
     await prisma.$disconnect();
   });
 
-  it("refuses an illegal order status change without writing events", async () => {
-    const { order } = await createOrderAndBatch();
-
-    await expect(
-      setOrderStatus(prisma, {
-        orderId: order.id,
-        status: "IN_PRODUCTION",
-        actor,
-        correlationId,
-      }),
-    ).rejects.toThrow(IllegalTransitionError);
-    await expect(prisma.order.findUnique({ where: { id: order.id } })).resolves.toMatchObject({
-      status: "DRAFT",
-    });
-    await expect(prisma.orderEvent.count()).resolves.toBe(0);
-    await expect(prisma.auditEvent.count()).resolves.toBe(0);
-  });
-
-  it("records a legal order transition in both timelines", async () => {
-    const { order } = await createOrderAndBatch();
-    const updated = await setOrderStatus(prisma, {
-      orderId: order.id,
-      status: "ACKNOWLEDGED",
-      actor,
-      correlationId,
-    });
-
-    expect(updated.status).toBe("ACKNOWLEDGED");
-    await expect(
-      prisma.orderEvent.findFirst({ where: { orderId: order.id } }),
-    ).resolves.toMatchObject({ type: "order.status_changed" });
-    await expect(
-      prisma.auditEvent.findFirst({
-        where: { entityType: "Order", entityId: order.id },
-      }),
-    ).resolves.toMatchObject({ action: "order.status_changed" });
-  });
-
-  it("validates and records batch transitions atomically", async () => {
-    const { batch } = await createOrderAndBatch();
-    const updated = await setBatchStatus(prisma, {
-      batchId: batch.id,
-      status: "DOWNLOADING",
-      actor,
-      correlationId,
-    });
-
-    expect(updated.status).toBe("DOWNLOADING");
-    await expect(
-      prisma.orderEvent.findFirst({ where: { batchId: batch.id } }),
-    ).resolves.toMatchObject({ type: "batch.status_changed" });
-    await expect(
-      prisma.auditEvent.findFirst({
-        where: { entityType: "OrderBatch", entityId: batch.id },
-      }),
-    ).resolves.toMatchObject({ action: "batch.status_changed" });
-
-    await expect(
-      setBatchStatus(prisma, {
-        batchId: batch.id,
-        status: "VERIFIED",
-        actor,
-        correlationId,
-      }),
-    ).rejects.toThrow(IllegalTransitionError);
-    await expect(prisma.orderEvent.count()).resolves.toBe(1);
-    await expect(prisma.auditEvent.count()).resolves.toBe(1);
-  });
-
-  it("blocks manual batch transitions after transfer jobs exist", async () => {
-    const { batch } = await createOrderAndBatch();
-    await prisma.transferJob.create({
-      data: {
-        batchId: batch.id,
-        kind: "DOWNLOAD",
-        correlationId,
-      },
-    });
-
-    await expect(
-      setBatchStatus(prisma, {
-        batchId: batch.id,
-        status: "CANCELLED",
-        actor,
-        correlationId,
-      }),
-    ).rejects.toThrow(/controlled by|disabled after|transfer pipeline/iu);
-    await expect(
-      prisma.orderBatch.findUniqueOrThrow({ where: { id: batch.id } }),
-    ).resolves.toMatchObject({ status: "PENDING" });
-    await expect(prisma.orderEvent.count()).resolves.toBe(0);
-  });
-
-  it("refuses an ETA earlier than now without writing events", async () => {
-    const { order } = await createOrderAndBatch();
-
-    await expect(
-      setEta(prisma, {
-        orderId: order.id,
-        eta: new Date("2026-07-26T11:59:59.000Z"),
-        actor,
-        correlationId,
-        now,
-      }),
-    ).rejects.toThrow(/future/i);
-    await expect(prisma.order.findUnique({ where: { id: order.id } })).resolves.toMatchObject({
-      eta: null,
-    });
-    await expect(prisma.orderEvent.count()).resolves.toBe(0);
-    await expect(prisma.auditEvent.count()).resolves.toBe(0);
-  });
-
-  it("records a future ETA and note in both timelines", async () => {
-    const { order } = await createOrderAndBatch();
-    const eta = new Date("2026-07-28T09:00:00.000Z");
-    const updated = await setEta(prisma, {
+  it("approves an unassigned order into production and is idempotent", async () => {
+    const { order } = await createUnassignedOrder({ withThread: true });
+    const eta = new Date("2026-07-28T12:00:00.000Z");
+    const approved = await approveOrder(prisma, {
       orderId: order.id,
       eta,
-      note: "Subject to final file count",
       actor,
       correlationId,
       now,
     });
-
-    expect(updated.eta).toEqual(eta);
-    expect(updated.etaNote).toBe("Subject to final file count");
+    expect(approved.status).toBe("IN_PRODUCTION");
+    expect(approved.etaLockedAt).not.toBeNull();
+    expect(approved.etaSentAt).not.toBeNull();
     await expect(
-      prisma.orderEvent.findFirst({ where: { orderId: order.id } }),
-    ).resolves.toMatchObject({ type: "order.eta_set" });
-    await expect(
-      prisma.auditEvent.findFirst({
-        where: { entityType: "Order", entityId: order.id },
+      prisma.outboundEmail.findUnique({
+        where: { idempotencyKey: `order-confirmation:${order.id}` },
       }),
-    ).resolves.toMatchObject({ action: "order.eta_set" });
+    ).resolves.toMatchObject({ status: "APPROVED", template: "ORDER_CONFIRMATION" });
+
+    const again = await approveOrder(prisma, {
+      orderId: order.id,
+      actor,
+      correlationId,
+      now,
+    });
+    expect(again.status).toBe("IN_PRODUCTION");
+  });
+
+  it("requires a reason when changing a locked ETA", async () => {
+    const { order } = await createUnassignedOrder({ withThread: true });
+    await approveOrder(prisma, {
+      orderId: order.id,
+      actor,
+      correlationId,
+      now,
+    });
+    const firstEta = new Date("2026-07-28T12:00:00.000Z");
+    await setOrderEta(prisma, {
+      orderId: order.id,
+      eta: firstEta,
+      actor,
+      correlationId,
+      now,
+    });
+    await expect(
+      setOrderEta(prisma, {
+        orderId: order.id,
+        eta: new Date("2026-07-29T12:00:00.000Z"),
+        actor,
+        correlationId,
+        now,
+      }),
+    ).rejects.toThrow(/reason/i);
+
+    await expect(
+      setOrderEta(prisma, {
+        orderId: order.id,
+        eta: new Date("2026-07-29T12:00:00.000Z"),
+        reason: "Client requested later delivery",
+        actor,
+        correlationId,
+        now,
+      }),
+    ).resolves.toMatchObject({ status: "IN_PRODUCTION" });
+  });
+
+  it("marks ready to upload only from in production", async () => {
+    const { order } = await createUnassignedOrder();
+    await expect(
+      markReadyToUpload(prisma, { orderId: order.id, actor, correlationId }),
+    ).rejects.toThrow(/In Production/i);
+
+    await approveOrder(prisma, { orderId: order.id, actor, correlationId, now });
+    await expect(
+      markReadyToUpload(prisma, { orderId: order.id, actor, correlationId }),
+    ).resolves.toMatchObject({ status: "READY_TO_UPLOAD" });
+  });
+
+  it("requires an emergency-edit reason and rejects ready-to-upload edits", async () => {
+    const { order } = await createUnassignedOrder();
+    await expect(
+      updateOrderDetails(prisma, {
+        orderId: order.id,
+        title: "New",
+        orderType: "Color",
+        reason: "fix",
+        actor,
+        correlationId,
+      }),
+    ).rejects.toThrow(/reason/i);
+
+    await expect(
+      updateOrderDetails(prisma, {
+        orderId: order.id,
+        title: "New title",
+        orderType: "Color",
+        reason: "Client corrected title",
+        actor,
+        correlationId,
+      }),
+    ).resolves.toMatchObject({ title: "New title" });
+
+    await approveOrder(prisma, { orderId: order.id, actor, correlationId, now });
+    await markReadyToUpload(prisma, { orderId: order.id, actor, correlationId });
+    await expect(
+      updateOrderDetails(prisma, {
+        orderId: order.id,
+        title: "Nope",
+        orderType: "Color",
+        reason: "Should not work",
+        actor,
+        correlationId,
+      }),
+    ).rejects.toThrow(/ready-to-upload/i);
   });
 });

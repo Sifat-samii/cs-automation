@@ -52,10 +52,17 @@ describe("HMAC email ingest route", () => {
     const second = await POST(signedRequest(bodyValue));
     expect(first.status).toBe(201);
     expect(second.status).toBe(200);
-    const firstBody = (await first.json()) as { emailMessageId: string; proposalId: string };
+    const firstBody = (await first.json()) as {
+      emailMessageId: string;
+      proposalId: string;
+      receiptOutboundEmailId: string | null;
+    };
     await expect(second.json()).resolves.toMatchObject({
-      ...firstBody,
+      emailMessageId: firstBody.emailMessageId,
+      proposalId: firstBody.proposalId,
+      receiptOutboundEmailId: firstBody.receiptOutboundEmailId,
       duplicate: true,
+      orchestration: null,
     });
     await expect(prisma.emailMessage.count()).resolves.toBe(1);
     await expect(prisma.proposal.count()).resolves.toBe(1);

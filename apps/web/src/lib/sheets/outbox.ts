@@ -75,6 +75,19 @@ export async function enqueueSheetMirror(
     clientId: order.clientId,
   });
 
+  const existingPending = await db.sheetMirrorOutbox.findFirst({
+    where: { orderId: order.id, status: "PENDING" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  if (existingPending) {
+    await db.sheetMirrorOutbox.update({
+      where: { id: existingPending.id },
+      data: { payload, lastError: null },
+    });
+    return;
+  }
+
   await db.sheetMirrorOutbox.create({
     data: {
       orderId: order.id,
@@ -112,11 +125,31 @@ export async function claimPendingMirror(
       .map(({ id }) => rowsById.get(id))
       .filter((row): row is NonNullable<typeof row> => Boolean(row));
 
-    const claims: MirrorClaim[] = [];
+    const latestIndexByOrder = new Map<string, number>();
     for (let index = 0; index < ordered.length; index += 1) {
-      const row = ordered[index]!;
+      latestIndexByOrder.set(ordered[index]!.orderId, index);
+    }
+
+    const emitRows = ordered.filter((row, index) => latestIndexByOrder.get(row.orderId) === index);
+
+    for (const row of ordered) {
+      if (emitRows.some((emit) => emit.id === row.id)) continue;
+      await transaction.sheetMirrorOutbox.update({
+        where: { id: row.id },
+        data: {
+          status: "DONE",
+          providerRowKey: `superseded:${row.id}`,
+          lastError: "Superseded by a newer pending mirror for the same order",
+          dispatchedAt: new Date(),
+        },
+      });
+    }
+
+    const claims: MirrorClaim[] = [];
+    for (let index = 0; index < emitRows.length; index += 1) {
+      const row = emitRows[index]!;
       const payload = asPayload(row.payload);
-      const next = ordered[index + 1];
+      const next = emitRows[index + 1];
       const nextPayload = next ? asPayload(next.payload) : null;
       const blankRowAfter = !nextPayload || nextPayload.placementGroup !== payload.placementGroup;
 

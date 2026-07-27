@@ -83,20 +83,22 @@ export function ProposalReviewActions({
           present.
         </p>
         <div className="grid gap-4 md:grid-cols-2">
-          <label className="space-y-1 text-sm font-medium text-slate-700">
-            Client
-            <select
-              name="clientId"
-              defaultValue={proposedClientId ?? ""}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-            >
-              <option value="">Choose client</option>
-              {options.clients.map((client) => (
-                <option key={client.id} value={client.id}>
-                  {client.label}
-                </option>
-              ))}
-            </select>
+          <div className="space-y-1 text-sm font-medium text-slate-700">
+            <label className="block space-y-1">
+              Client
+              <select
+                name="clientId"
+                defaultValue={proposedClientId ?? ""}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+              >
+                <option value="">Choose client</option>
+                {options.clients.map((client) => (
+                  <option key={client.id} value={client.id}>
+                    {client.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             {!proposedClientId ? (
               <>
                 <span className="block text-xs font-normal text-amber-800">
@@ -111,7 +113,7 @@ export function ProposalReviewActions({
                 ) : null}
               </>
             ) : null}
-          </label>
+          </div>
           <label className="space-y-1 text-sm font-medium text-slate-700">
             Title
             <input
