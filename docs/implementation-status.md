@@ -1,13 +1,13 @@
 # Implementation status
 
-| Phase | Name                | Branch                        | Status      |
-| ----- | ------------------- | ----------------------------- | ----------- |
-| 0     | Project foundation  | `feature/project-foundation`  | Complete    |
-| 1     | Manual order intake | `feature/manual-order-intake` | Not started |
-| 2     | File agent          | `feature/file-agent`          | Not started |
-| 3     | Gmail integration   | `feature/gmail-integration`   | Not started |
-| 4     | AI assistance       | `feature/ai-assistance`       | Not started |
-| 5     | Google Sheets sync  | `feature/google-sheets-sync`  | Not started |
+| Phase | Name                  | Branch                        | Status                     |
+| ----- | --------------------- | ----------------------------- | -------------------------- |
+| 0     | Project foundation    | `feature/project-foundation`  | Complete                   |
+| 1     | Manual order intake   | `feature/manual-order-intake` | Complete                   |
+| 2     | File agent            | `feature/file-agent`          | Complete; PR pending       |
+| 3     | Gmail integration     | local implementation tree     | Complete; activation gated |
+| 4     | AI + workflow rewrite | `feature/client-folder-ux`    | Implemented; go-live gated |
+| 5     | Google Sheets sync    | `feature/google-sheets-sync`  | Wave A + Wave B complete   |
 
 ## Phase 0 checklist
 
@@ -37,8 +37,183 @@
 - SMB decision: validated 2,000 MiB copies selected robocopy as the Phase 2 primary transfer
   mechanism; benchmark folders were removed and their absence verified.
 
-The implementation is complete on `feature/project-foundation`. GitHub integration remains
-pending because `develop` and `main` do not yet exist on the remote and no pull request has been
-opened.
+Phase 0 is integrated into `develop`.
 
-Last updated: 2026-07-26
+## Phase 1 checklist
+
+- [x] UNC-safe path building, sanitisation, extended-length conversion, and path budgets
+- [x] Order and batch lifecycle state machines
+- [x] Client, identity, order, batch, source-link, and append-only order-event schema
+- [x] Client registry with exact-address and domain resolution
+- [x] Collision-safe transactional order creation
+- [x] Batch creation, ETA handling, and lifecycle mutation services
+- [x] Role-protected manual client and order UI
+- [x] Runtime, database, and quality-gate verification
+
+## Phase 1 verification
+
+- Quality gate: `npm run verify` passes strict TypeScript, ESLint, Prettier, all package builds,
+  Vitest, and the Next.js production build.
+- Tests: 18 test files and 147 tests pass, including concurrent order sequencing, lifecycle
+  rejection, transaction rollback, append-only events, redacted audits, actions, and RBAC.
+- Database: the development and test databases report all three migrations applied with no
+  pending migration or drift.
+- Runtime flow: a seeded `CS_LEAD` signed in, previewed and created an order, added an
+  `ADDITIONAL` batch, set an ETA, and progressed the order from `DRAFT` through `CLOSED`.
+- Traceability: the validation order stored seven ordered timeline events and seven
+  correlation-matched audit records; every record named the acting user.
+- Cleanup: the disposable runtime-validation records were removed by resetting the known
+  development schema, then the bootstrap account was reseeded.
+- Scope: Phase 1 stores computed paths but performs no filesystem writes.
+
+## Phase 1 running-state verification
+
+- The merged `develop` application starts successfully on port 3100 under the host account.
+- `GET /login` returns 200, while an unauthenticated dashboard request redirects to `/login`.
+- A short-lived authenticated `CS_LEAD` session loads `/dashboard` and `/clients/new` with 200
+  responses.
+- The live new-client page enumerates `DPBP`, `FN`, and `Vrly` from the approved backup test root.
+- The diagnostic session token was stored only as a SHA-256 hash and revoked immediately after
+  the check.
+- Runtime logs contain no application error for these requests.
+
+## Phase 2 checklist
+
+- [x] Leased PostgreSQL transfer queue with exhausted-lease terminalisation and attempt fencing
+- [x] HMAC-only agent job API with replay-window enforcement
+- [x] Extended-length filesystem port and confined temporary implementation
+- [x] Collision-safe public Dropbox, credential-free Google Drive failure, and manual-drop adapters
+- [x] ZIP integrity, path-budget, zero-byte, and SHA-256 staging verification
+- [x] Share-root scratch isolation, atomic publication, robocopy copy, and manifest verification
+- [x] File Agent loop and NSSM Windows service installer
+- [x] Mid-transfer progress, five-second monitoring, coordinated retry, and manual-drop controls
+- [x] Live 2 GiB transfer, crash recovery, cleanup, and full quality gate
+
+## Phase 2 verification
+
+- Quality gate: strict TypeScript, ESLint, Prettier, Vitest, all package builds, and the Next.js
+  production build pass through `npm run verify`.
+- Tests: 29 test files and 204 tests pass, including final-attempt lease expiry, concurrent reclaim,
+  stale-attempt fencing, mid-transfer progress, colliding Dropbox filenames, lifecycle
+  coordination, actor foreign keys, overwrite refusal, scratch cleanup, and crash recovery.
+- Database: all five migrations, including the additive actor foreign-key migration, are applied
+  to development and test with no pending migration.
+- Live transfer: 8 × 256 MiB files (2 GiB) reached `VERIFIED` under the approved interim
+  `TUDB01\Designer-TUUO` identity in the two `_Software Test` roots.
+- Recovery: a killed `STAGE_VERIFY` lease expired naturally and was reclaimed on attempt 2.
+- Integrity: 24 staged/backup/production artifact rows held matching SHA-256 manifests; both roots
+  had 8 files and 2,147,483,648 bytes, matching markers, and no partial transfer directory.
+- Throughput: the corrected full retry averaged 14.11 MiB/s; production copy plus promotion
+  verification averaged 30.95 MiB/s.
+- Robocopy compatibility: ADR 0006 records why normal UNC is used only at the robocopy process
+  boundary; all Node filesystem operations remain extended-length.
+- Cleanup: both E2E share folders, both staging folders, the disposable test records, background
+  processes, and local runtime logs were removed after evidence capture.
+- Review hardening: expired final attempts now fail the batch instead of remaining leased;
+  completion, failure, and progress calls require the current attempt; batch status changes to
+  `DOWNLOADING` on lease; manual status edits are blocked after jobs exist; and share publication
+  scratch is confined to the managed root-level `.cs-file-agent-transfers` namespace, swept on
+  retry/failure, and promoted only after SHA-256 verification.
+
+Phase 2 is complete and review-hardened on `feature/file-agent`, but is not yet merged into
+`develop`. Its PR must pass CI and merge before Phase 3 gate evaluation can authorize any Phase 3
+code. Production activation remains blocked until IT provisions the dedicated `.\CS_FileAgent`
+account (or approved equivalent) and grants its required rights. The approved host identity remains
+interim only; cutover has not occurred.
+
+## Phase 3 checklist
+
+- [x] Additive `EmailMessage`, `Proposal`, and `OutboundEmail` schema and migration
+- [x] HMAC-only, rate-limited, replay-idempotent Gmail ingest
+- [x] Deterministic client/thread/source extraction and ordered rule proposals
+- [x] Role-protected review inbox with approve, edit, link, and ignore decisions
+- [x] Atomic order/batch/transfer/acknowledgement approval transaction
+- [x] Fail-closed outbound approval plus HMAC pending/sent machine APIs
+- [x] `FILES_VERIFIED` and `ETA_NOTICE` drafting hooks
+- [x] Inactive, credential-free Gmail poll/send n8n workflow exports
+      (poll uses Schedule + Get Many for reliable manual dry-runs; send uses HTML + no n8n attribution)
+- [x] Local database and full repository quality-gate verification
+- [x] Pilot-approved outbound email copy for `ACKNOWLEDGEMENT`, `FILES_VERIFIED`, and `ETA_NOTICE`
+- [ ] Live n8n Windows service and shared-mailbox OAuth verification
+
+## Phase 3 verification
+
+- Quality gate: `npm run verify` passes strict TypeScript, ESLint, Prettier, 37 Vitest files,
+  235 tests, all workspace builds, and the Next.js 16 production build.
+- Database: Prisma validates successfully and the test database reports all six migrations
+  applied, including `20260726210000_add_gmail_domain`.
+- Idempotency: service and signed-route tests confirm repeated and concurrent delivery retains one
+  `EmailMessage` and one `Proposal`; approving the same proposal twice retains one order, batch,
+  transfer job, and acknowledgement draft.
+- Atomicity: an injected transfer-queue failure rolls back the order, batch, sources, outbound
+  draft, proposal decision, and email link.
+- Machine security: unsigned and stale ingest requests are rejected; browser cookies do not
+  authorise machine routes; the ingest burst limit returns `429`.
+- Outbound security: pilot templates render with merge fields; `RECEIPT_ACKNOWLEDGEMENT` and
+  `FILES_VERIFIED` may be system-approved (ADR 0007); drafts that still contain
+  `GATE_BLOCKED_PLACEHOLDER` cannot be human-approved; pending claims `APPROVED` rows with
+  `approvedAt` set using `FOR UPDATE SKIP LOCKED`.
+- Lifecycle (Phase 3 historical): acknowledgement and ETA notice flows advanced order status on
+  send. **Phase 4 supersedes this:** order status moves only via CS Approve / Ready to Upload;
+  ETA is a lockable tag; send never advances status.
+- Threading: pending outbound rows resolve the original inbound sender and expose the stored
+  `gmailThreadId`; the send export passes that thread id to Gmail.
+- Workflow exports: both JSON files parse successfully and remain inactive with no OAuth token or
+  HMAC secret embedded.
+
+Phase 3 is implemented and locally verified at the user's direction. Pilot-approved outbound
+templates are in place. Production activation remains blocked because n8n is not registered as a
+Windows service and shared-mailbox Gmail OAuth is not evidenced. Drafts that still contain
+`GATE_BLOCKED_PLACEHOLDER` remain fail-closed and cannot become `APPROVED`.
+
+## Phase 4 checklist
+
+- [x] Design spec + ADR 0009 (AI send under gates) + lifecycle CONTRACT update
+- [x] Three-status `OrderStatus` migration (`UNASSIGNED` / `IN_PRODUCTION` / `READY_TO_UPLOAD`)
+- [x] ETA lock/pause/approval fields + `MailThreadState` + AI env keys
+- [x] Outbound pre-rendered AI bodies, claim-time pause gate, ETA/approve/ready services
+- [x] Two-phase ingest with auto-create, receipt, download, loop/self-address guards
+- [x] CS decision panel (orders + inbox), query/pause/ready, ETA tags, Time Remaining
+- [x] Ollama classifier/drafts, safety guards, bake-off harness + benchmark doc
+- [x] Go-live runbook + n8n poll timeout docs
+- [ ] Operator activation: Ollama model pull, n8n OAuth, smoke sequence on real mail
+
+## Phase 4 notes
+
+- Branch: `feature/client-folder-ux`.
+- Email send no longer advances order status; CS Approve / Ready to Upload own transitions.
+- When `AI_ENABLED=false`, classification uses a deterministic stub (links → ORDER) for tests and
+  degraded local runs.
+- Path-budget / create failures on auto-create degrade to `NEEDS_HUMAN` without failing ingest HTTP.
+- Ready to Upload is a terminal stub; delivery/upload is out of scope.
+
+## Phase 5 Wave A checklist
+
+- [x] Client code derivation helpers (`deriveClientCode`, `allocateUniqueClientCode`)
+- [x] Idempotent seed of the approved client display-name list
+- [x] `client:read` for Lead + Executive; `client:manage` remains Lead-only
+- [x] Order status buckets (Past / In production / Unassigned)
+- [x] Clients list with bucket counts and `/clients/[id]` detail sections
+- [x] Inbox “New client” modal creating clients via `createClient` for unknown senders
+- [x] ADR 0008 (clients before Sheets; AI deferred; layout gate for Wave B)
+- [x] Live Google Sheet layout capture (`docs/integrations/google-sheet-layout.md`)
+- [x] Wave B outbox, HMAC mirror APIs, n8n Sheets workflow
+
+## Phase 5 Wave B checklist
+
+- [x] Layout: Daily Order Pipeline — write Date / Client / Order Name / Quantity only; match on Order Name
+- [x] Blank-row grouping: consecutive same-client+date claims, then one blank row
+- [x] `SheetMirrorOutbox` + transactional enqueue on order create
+- [x] HMAC `/api/mirror/pending` and `/api/mirror/:id/done`
+- [x] Inactive `n8n/workflows/google-sheets-mirror.json`
+- [x] `scripts/reconcile-sheet-mirror.mjs` CSV compare helper
+- [ ] Live n8n OAuth + copy-workbook dry-run evidence (operator)
+
+## Phase 5 Wave A notes
+
+- Branch: `feature/google-sheets-sync`.
+- Seeded `folderName` equals `code` until CS rebinds folders on the shares.
+- **Client registration UX:** new clients no longer pick an unbound folder. `folderName` is derived from the display name; backup and production share folders are created at registration when missing. The clients table shows folder name + backup path with copy, and a row-click popup lists orders (no Remarks column).
+- Sheets is one-way from Postgres; Status/QC columns remain human-owned on the sheet.
+
+Last updated: 2026-07-27

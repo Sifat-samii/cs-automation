@@ -1,0 +1,232 @@
+{
+  "name": "CS Automation - Approved Gmail Send",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "25cebecf-983f-49b2-a57d-0c969de9439a",
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { createHmac } = require('crypto');\nconst body = '';\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = createHmac('sha256', $env.INGEST_HMAC_SECRET).update(`${timestamp}.${body}`, 'utf8').digest('hex');\nreturn [{ json: { timestamp, signature } }];"
+      },
+      "id": "5bfe907b-c3dc-4ba3-a0a1-16339ad7d47e",
+      "name": "Sign Pending Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "url": "http://127.0.0.1:3100/api/outbound/pending?limit=50",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-cs-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-cs-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "ef25631d-c85f-4f5f-b2c5-38f747b5dd68",
+      "name": "GET Approved Outbound",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "outbound",
+        "options": {}
+      },
+      "id": "8d3b9470-d7f1-4458-89c7-f8a160b9d11f",
+      "name": "Split Outbound",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [760, 0]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.toAddress }}",
+        "subject": "={{ $json.renderedSubject }}",
+        "emailType": "html",
+        "message": "={{ $json.renderedBody }}",
+        "options": {
+          "appendAttribution": false,
+          "threadId": "={{ $json.gmailThreadId }}"
+        }
+      },
+      "id": "aa38d9e1-5a08-42d3-b855-0b8cd3a0d550",
+      "name": "Send Gmail In Thread",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1010, 0],
+      "credentials": {
+        "gmailOAuth2": {
+          "name": "SHARED_CS_GMAIL_OAUTH"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { createHmac } = require('crypto');\nconst source = $('Split Outbound').item.json;\nconst payload = $json;\nconst sentMessageId = String(\n  payload.id ??\n    payload.messageId ??\n    payload.data?.id ??\n    payload.message?.id ??\n    '',\n);\nif (!sentMessageId) throw new Error('Gmail did not return a sent message id');\nconst body = JSON.stringify({ sentMessageId });\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = createHmac('sha256', $env.INGEST_HMAC_SECRET).update(`${timestamp}.${body}`, 'utf8').digest('hex');\nreturn [{ json: { outboundEmailId: source.id, body, timestamp, signature } }];"
+      },
+      "id": "fdc7830a-846c-4740-adc9-74643f0a4e7f",
+      "name": "Sign Sent Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1260, -80]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://127.0.0.1:3100/api/outbound/{{ $json.outboundEmailId }}/sent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-cs-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-cs-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "dca98006-e4e7-4edb-9d8f-bd051042d78e",
+      "name": "POST Sent Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, -80]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { createHmac } = require('crypto');\nconst source = $('Split Outbound').item.json;\nconst err = $json.error ?? $json;\nconst message = String(err.message ?? err.description ?? err.error ?? err).slice(0, 2000);\nconst body = JSON.stringify({ error: message || 'Gmail send failed' });\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = createHmac('sha256', $env.INGEST_HMAC_SECRET).update(`${timestamp}.${body}`, 'utf8').digest('hex');\nreturn [{ json: { outboundEmailId: source.id, body, timestamp, signature } }];"
+      },
+      "id": "e1f2a3b4-c5d6-4789-a012-3456789abcde",
+      "name": "Sign Fail Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1260, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://127.0.0.1:3100/api/outbound/{{ $json.outboundEmailId }}/fail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-cs-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-cs-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "f2a3b4c5-d6e7-4890-b123-456789abcdef",
+      "name": "POST Fail Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 120]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every Minute": {
+      "main": [[{ "node": "Sign Pending Request", "type": "main", "index": 0 }]]
+    },
+    "Sign Pending Request": {
+      "main": [[{ "node": "GET Approved Outbound", "type": "main", "index": 0 }]]
+    },
+    "GET Approved Outbound": {
+      "main": [[{ "node": "Split Outbound", "type": "main", "index": 0 }]]
+    },
+    "Split Outbound": {
+      "main": [[{ "node": "Send Gmail In Thread", "type": "main", "index": 0 }]]
+    },
+    "Send Gmail In Thread": {
+      "main": [
+        [{ "node": "Sign Sent Callback", "type": "main", "index": 0 }],
+        [{ "node": "Sign Fail Callback", "type": "main", "index": 0 }]
+      ]
+    },
+    "Sign Sent Callback": {
+      "main": [[{ "node": "POST Sent Callback", "type": "main", "index": 0 }]]
+    },
+    "Sign Fail Callback": {
+      "main": [[{ "node": "POST Fail Callback", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a0b1c2d3-e4f5-4678-9012-3456789abcde",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

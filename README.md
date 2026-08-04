@@ -14,22 +14,27 @@ On-prem automation for the Client Support team: Gmail intake, human-approved ord
 
 ## Current status
 
-Phase 0 (project foundation) is implemented and verified on branch
-`feature/project-foundation`. It includes the npm workspaces monorepo, shared security
-utilities, PostgreSQL schema and append-only audit enforcement, staff-ID authentication,
-protected dashboard shell, CI workflow, and SMB transfer benchmark. The branch is pending
-integration into `develop`.
+Phases 0 and 1 are integrated into `develop`. Phase 2 is implemented and verified on
+`feature/file-agent`. The application now includes the leased transfer queue, HMAC-only agent API,
+streaming public Dropbox and manual-drop intake, staging/archive verification, atomic backup and
+production publication, SHA-256 manifests, the Windows File Agent, and operator transfer
+monitoring.
+
+The merged application has been verified running on port 3100 under a host account that can read
+the approved backup test root. GitHub Actions and the local `npm run verify` quality gate both
+pass.
 
 See [docs/implementation-status.md](docs/implementation-status.md) for verification results.
 
 ## Workspace
 
-- `packages/shared` — environment validation, HMAC helpers, and Argon2id password hashing.
+- `packages/shared` — environment validation, HMAC, password hashing, UNC paths, and lifecycle
+  contracts.
 - `packages/db` — Prisma schema, migrations, seed, client, and test-only database reset helper.
-- `apps/web` — Next.js login and protected dashboard shell.
+- `apps/web` — Next.js authentication, protected dashboard, client registry, and manual order
+  management.
 
-Order intake, file-agent operations, Gmail integration, AI assistance, and Sheets sync are not
-part of Phase 0.
+Gmail integration, AI assistance, and Sheets sync remain later phases.
 
 ## First-time setup
 
@@ -67,6 +72,7 @@ Never configure `X:` or `Z:` for automation. Use:
 - [Unresolved questions](docs/unresolved-questions.md)
 - [Decisions (ADRs)](docs/decisions/)
 - [Phase 0 implementation plan](docs/superpowers/plans/2026-07-26-cs-automation-phase-0.md)
+- [Full implementation roadmap](docs/superpowers/plans/2026-07-26-cs-automation-full-roadmap.md)
 
 ## Branching
 

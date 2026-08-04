@@ -9,6 +9,18 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./paths": {
+      "types": "./dist/paths.d.ts",
+      "default": "./dist/paths.js"
+    },
+    "./lifecycle": {
+      "types": "./dist/lifecycle.d.ts",
+      "default": "./dist/lifecycle.js"
+    },
+    "./client-code": {
+      "types": "./dist/client-code.d.ts",
+      "default": "./dist/client-code.js"
     }
   },
   "scripts": {

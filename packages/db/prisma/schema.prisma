@@ -12,6 +12,118 @@ enum UserRole {
   CS_LEAD
 }
 
+enum ClientIdentityKind {
+  ADDRESS
+  DOMAIN
+}
+
+enum OrderStatus {
+  UNASSIGNED
+  IN_PRODUCTION
+  READY_TO_UPLOAD
+}
+
+enum OrderBatchKind {
+  INITIAL
+  ADDITIONAL
+  SAMPLE
+  CORRECTION
+}
+
+enum OrderBatchStatus {
+  PENDING
+  DOWNLOADING
+  STAGED
+  WRITTEN_BACKUP
+  COPIED_PRODUCTION
+  VERIFIED
+  FAILED
+  CANCELLED
+}
+
+enum SourceLinkKind {
+  DROPBOX
+  GDRIVE
+  ATTACHMENT
+  MANUAL_DROP
+  OTHER
+}
+
+enum TransferJobKind {
+  DOWNLOAD
+  STAGE_VERIFY
+  WRITE_BACKUP
+  COPY_PRODUCTION
+  VERIFY_PRODUCTION
+}
+
+enum TransferJobStatus {
+  QUEUED
+  LEASED
+  SUCCEEDED
+  FAILED
+}
+
+enum TransferErrorClass {
+  TRANSIENT
+  PERMANENT
+}
+
+enum FileArtifactStage {
+  STAGED
+  BACKUP
+  PRODUCTION
+}
+
+enum EmailDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum EmailTriageStatus {
+  UNREVIEWED
+  LINKED
+  IGNORED
+}
+
+enum ProposalKind {
+  CREATE_ORDER
+  ADD_BATCH
+  NO_ACTION
+  NEEDS_HUMAN
+}
+
+enum ProposalSource {
+  RULE
+  LLM
+}
+
+enum ProposalStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  SUPERSEDED
+}
+
+enum OutboundTemplate {
+  ACKNOWLEDGEMENT
+  RECEIPT_ACKNOWLEDGEMENT
+  FILES_VERIFIED
+  ETA_NOTICE
+  ORDER_CONFIRMATION
+  ETA_UPDATE
+  CONVERSATION_REPLY
+  QUERY_REPLY
+}
+
+enum OutboundEmailStatus {
+  DRAFT
+  APPROVED
+  SENDING
+  SENT
+  FAILED
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   loginId      String   @unique
@@ -23,8 +135,17 @@ model User {
   createdAt    DateTime @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @db.Timestamptz(6)
 
-  sessions    Session[]
-  auditEvents AuditEvent[]
+  sessions                    Session[]
+  auditEvents                 AuditEvent[]
+  ordersCreated               Order[]       @relation("OrderCreatedBy")
+  ordersApproved              Order[]       @relation("OrderApprovedBy")
+  batchesCreated              OrderBatch[]  @relation("OrderBatchCreatedBy")
+  manualDropConfirmations     OrderBatch[]  @relation("OrderBatchManualDropConfirmedBy")
+  sourceLinksAdded            SourceLink[]  @relation("SourceLinkAddedBy")
+  orderEvents                 OrderEvent[]   @relation("OrderEventActor")
+  proposalsDecided            Proposal[]     @relation("ProposalDecidedBy")
+  outboundEmailsApproved      OutboundEmail[] @relation("OutboundEmailApprovedBy")
+  mailThreadsPaused           MailThreadState[] @relation("MailThreadPausedBy")
 }
 
 model Session {
@@ -55,4 +176,287 @@ model AuditEvent {
   @@index([entityType, entityId])
   @@index([occurredAt])
   @@index([correlationId])
+}
+
+model Client {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique
+  displayName String
+  folderName  String   @unique
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  identities ClientIdentity[]
+  orders     Order[]
+  emailMessages EmailMessage[]
+}
+
+model ClientIdentity {
+  id       String             @id @default(uuid()) @db.Uuid
+  clientId String             @db.Uuid
+  client   Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  kind     ClientIdentityKind
+  value    String
+
+  @@unique([kind, value])
+  @@index([clientId])
+}
+
+model Order {
+  id                   String      @id @default(uuid()) @db.Uuid
+  code                 String      @unique
+  clientId             String      @db.Uuid
+  client               Client      @relation(fields: [clientId], references: [id])
+  title                String
+  orderType            String
+  quantity             Int?
+  status               OrderStatus @default(UNASSIGNED)
+  eta                  DateTime?   @db.Timestamptz(6)
+  etaNote              String?
+  etaLockedAt          DateTime?   @db.Timestamptz(6)
+  etaSentAt            DateTime?   @db.Timestamptz(6)
+  etaChangeReason      String?
+  communicationPaused  Boolean     @default(false)
+  detailsLocked        Boolean     @default(true)
+  approvedAt           DateTime?   @db.Timestamptz(6)
+  approvedById         String?     @db.Uuid
+  approvedBy           User?       @relation("OrderApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  gmailThreadId        String?     @unique
+  folderName           String
+  backupPath           String
+  productionPath       String
+  cancelReason         String?
+  createdById          String      @db.Uuid
+  createdBy            User        @relation("OrderCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt            DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime    @updatedAt @db.Timestamptz(6)
+
+  batches OrderBatch[]
+  events  OrderEvent[]
+  emailMessages EmailMessage[]
+  outboundEmails OutboundEmail[]
+  sheetMirrorOutbox SheetMirrorOutbox[]
+
+  @@index([status])
+  @@index([clientId, createdAt])
+  @@index([createdById])
+  @@index([approvedById])
+}
+
+model OrderBatch {
+  id                       String           @id @default(uuid()) @db.Uuid
+  orderId                  String           @db.Uuid
+  order                    Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sequence                 Int
+  kind                     OrderBatchKind
+  status                   OrderBatchStatus @default(PENDING)
+  subfolder                String
+  notes                    String?
+  failureReason            String?
+  manualDropConfirmedAt    DateTime?        @db.Timestamptz(6)
+  manualDropConfirmedById  String?          @db.Uuid
+  manualDropConfirmedBy    User?            @relation("OrderBatchManualDropConfirmedBy", fields: [manualDropConfirmedById], references: [id], onDelete: Restrict)
+  createdById              String           @db.Uuid
+  createdBy                User             @relation("OrderBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt                DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime         @updatedAt @db.Timestamptz(6)
+
+  sourceLinks SourceLink[]
+  transferJobs TransferJob[]
+  fileArtifacts FileArtifact[]
+
+  @@unique([orderId, sequence])
+  @@index([status])
+  @@index([createdById])
+  @@index([manualDropConfirmedById])
+}
+
+model SourceLink {
+  id        String         @id @default(uuid()) @db.Uuid
+  batchId   String         @db.Uuid
+  batch     OrderBatch     @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  kind      SourceLinkKind
+  url       String?
+  localHint String?
+  addedById String         @db.Uuid
+  addedBy   User           @relation("SourceLinkAddedBy", fields: [addedById], references: [id], onDelete: Restrict)
+  createdAt DateTime       @default(now()) @db.Timestamptz(6)
+
+  @@index([batchId])
+  @@index([addedById])
+}
+
+model OrderEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  orderId       String   @db.Uuid
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  batchId       String?  @db.Uuid
+  type          String
+  payload       Json     @default("{}")
+  actorUserId   String?  @db.Uuid
+  actor         User?    @relation("OrderEventActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  actorLabel    String
+  correlationId String   @db.Uuid
+  occurredAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([orderId, occurredAt])
+  @@index([actorUserId])
+}
+
+model TransferJob {
+  id             String             @id @default(uuid()) @db.Uuid
+  batchId        String             @db.Uuid
+  batch          OrderBatch         @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  kind           TransferJobKind
+  status         TransferJobStatus  @default(QUEUED)
+  attempts       Int                @default(0)
+  maxAttempts    Int                @default(3)
+  leaseOwner     String?
+  leaseExpiresAt DateTime?          @db.Timestamptz(6)
+  lastError      String?
+  errorClass     TransferErrorClass?
+  bytesTotal     BigInt             @default(0)
+  bytesDone      BigInt             @default(0)
+  correlationId  String             @db.Uuid
+  createdAt      DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @db.Timestamptz(6)
+
+  @@unique([batchId, kind])
+  @@index([status, leaseExpiresAt, createdAt])
+}
+
+model FileArtifact {
+  id           String            @id @default(uuid()) @db.Uuid
+  batchId      String            @db.Uuid
+  batch        OrderBatch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  relativePath String
+  sizeBytes    BigInt
+  sha256       String
+  stage        FileArtifactStage
+  createdAt    DateTime          @default(now()) @db.Timestamptz(6)
+
+  @@unique([batchId, stage, relativePath])
+  @@index([batchId, stage])
+}
+
+model EmailMessage {
+  id             String            @id @default(uuid()) @db.Uuid
+  gmailMessageId String            @unique
+  gmailThreadId  String
+  direction      EmailDirection
+  fromAddress    String
+  toAddresses    String[]
+  subject        String
+  bodyText       String
+  receivedAt     DateTime          @db.Timestamptz(6)
+  clientId       String?           @db.Uuid
+  client         Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  orderId        String?           @db.Uuid
+  order          Order?            @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  triageStatus   EmailTriageStatus @default(UNREVIEWED)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
+
+  proposals      Proposal[]
+  outboundEmails OutboundEmail[]
+
+  @@index([triageStatus, receivedAt])
+  @@index([gmailThreadId])
+  @@index([clientId])
+  @@index([orderId])
+}
+
+model Proposal {
+  id             String         @id @default(uuid()) @db.Uuid
+  emailMessageId String         @db.Uuid
+  emailMessage   EmailMessage   @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+  kind           ProposalKind
+  payload        Json
+  confidence     Decimal        @db.Decimal(4, 3)
+  source         ProposalSource
+  status         ProposalStatus @default(PENDING)
+  evidence       Json
+  decidedById    String?        @db.Uuid
+  decidedBy      User?          @relation("ProposalDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  decidedAt      DateTime?      @db.Timestamptz(6)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
+
+  @@index([emailMessageId, status])
+  @@index([status, createdAt])
+  @@index([decidedById])
+}
+
+model OutboundEmail {
+  id              String              @id @default(uuid()) @db.Uuid
+  orderId         String?             @db.Uuid
+  order           Order?              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  emailMessageId  String?             @db.Uuid
+  emailMessage    EmailMessage?       @relation(fields: [emailMessageId], references: [id], onDelete: SetNull)
+  template        OutboundTemplate
+  renderedSubject String
+  renderedBody    String
+  bodySource      String              @default("TEMPLATE")
+  aiModel         String?
+  status          OutboundEmailStatus @default(DRAFT)
+  approvedById    String?             @db.Uuid
+  approvedBy      User?               @relation("OutboundEmailApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  approvedAt      DateTime?           @db.Timestamptz(6)
+  idempotencyKey  String              @unique
+  gmailThreadId   String
+  sentMessageId   String?
+  lastError       String?
+  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @db.Timestamptz(6)
+
+  @@index([status, createdAt])
+  @@index([orderId, template])
+  @@index([emailMessageId])
+  @@index([approvedById])
+  @@index([gmailThreadId])
+}
+
+model MailThreadState {
+  id            String    @id @default(uuid()) @db.Uuid
+  gmailThreadId String    @unique
+  paused        Boolean   @default(false)
+  pausedById    String?   @db.Uuid
+  pausedBy      User?     @relation("MailThreadPausedBy", fields: [pausedById], references: [id], onDelete: Restrict)
+  pausedAt      DateTime? @db.Timestamptz(6)
+  resumedAt     DateTime? @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([paused])
+  @@index([pausedById])
+}
+
+enum SheetMirrorOperation {
+  UPSERT
+}
+
+enum SheetMirrorStatus {
+  PENDING
+  CLAIMED
+  DONE
+  FAILED
+}
+
+model SheetMirrorOutbox {
+  id             String               @id @default(uuid()) @db.Uuid
+  orderId        String               @db.Uuid
+  order          Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  operation      SheetMirrorOperation @default(UPSERT)
+  payload        Json
+  status         SheetMirrorStatus    @default(PENDING)
+  attempts       Int                  @default(0)
+  lastError      String?
+  providerRowKey String?
+  dispatchedAt   DateTime?            @db.Timestamptz(6)
+  createdAt      DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime             @updatedAt @db.Timestamptz(6)
+
+  @@index([status, createdAt])
+  @@index([orderId])
 }

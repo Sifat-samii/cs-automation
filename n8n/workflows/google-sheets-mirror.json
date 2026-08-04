@@ -1,0 +1,310 @@
+{
+  "name": "CS Automation - Google Sheets Mirror",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 1 }]
+        }
+      },
+      "id": "a1b2c3d4-e5f6-4789-a012-3456789abcde",
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { createHmac } = require('crypto');\nconst body = '';\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = createHmac('sha256', $env.INGEST_HMAC_SECRET).update(`${timestamp}.${body}`, 'utf8').digest('hex');\nreturn [{ json: { timestamp, signature } }];"
+      },
+      "id": "b2c3d4e5-f6a7-4890-b123-456789abcdef",
+      "name": "Sign Pending Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "url": "http://127.0.0.1:3100/api/mirror/pending?limit=50",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-cs-timestamp", "value": "={{ $json.timestamp }}" },
+            { "name": "x-cs-signature", "value": "={{ $json.signature }}" }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": { "responseFormat": "json" }
+          }
+        }
+      },
+      "id": "c3d4e5f6-a7b8-4901-c234-56789abcdef0",
+      "name": "GET Pending Mirror",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "mirror",
+        "options": {}
+      },
+      "id": "d4e5f6a7-b8c9-4012-d345-6789abcdef01",
+      "name": "Split Mirror",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [760, 0]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.GOOGLE_SHEETS_SPREADSHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Daily Order Pipeline"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $json.row.Date }}",
+            "Client": "={{ $json.row.Client }}",
+            "Order Name": "={{ $json.row['Order Name'] }}",
+            "Quantity": "={{ $json.row.Quantity }}"
+          },
+          "matchingColumns": ["Order Name"],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Client",
+              "displayName": "Client",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Order Name",
+              "displayName": "Order Name",
+              "required": true,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Quantity",
+              "displayName": "Quantity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "USER_ENTERED"
+        }
+      },
+      "id": "e5f6a7b8-c9d0-4123-e456-789abcdef012",
+      "name": "Upsert Order Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1020, 0],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "SHARED_CS_GOOGLE_SHEETS_OAUTH"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Split Mirror').item.json.blankRowAfter }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "f6a7b8c9-d0e1-4234-f567-89abcdef0123",
+      "name": "Blank After Group?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1280, 0]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.GOOGLE_SHEETS_SPREADSHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Daily Order Pipeline"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "",
+            "Client": "",
+            "Order Name": "",
+            "Quantity": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Client",
+              "displayName": "Client",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Order Name",
+              "displayName": "Order Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Quantity",
+              "displayName": "Quantity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "USER_ENTERED"
+        }
+      },
+      "id": "a7b8c9d0-e1f2-4345-a678-9abcdef01234",
+      "name": "Append Blank Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1540, -120],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "SHARED_CS_GOOGLE_SHEETS_OAUTH"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { createHmac } = require('crypto');\nconst source = $('Split Mirror').item.json;\nconst orderName = String(source.row?.['Order Name'] ?? '');\nif (!orderName) throw new Error('Mirror claim missing Order Name');\nconst body = JSON.stringify({ providerRowKey: `order-name:${orderName}` });\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = createHmac('sha256', $env.INGEST_HMAC_SECRET).update(`${timestamp}.${body}`, 'utf8').digest('hex');\nreturn [{ json: { mirrorId: source.id, body, timestamp, signature } }];"
+      },
+      "id": "b8c9d0e1-f2a3-4456-b789-abcdef012345",
+      "name": "Sign Done Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://127.0.0.1:3100/api/mirror/{{ $json.mirrorId }}/done",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "x-cs-timestamp", "value": "={{ $json.timestamp }}" },
+            { "name": "x-cs-signature", "value": "={{ $json.signature }}" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "response": {
+            "response": { "responseFormat": "json" }
+          }
+        }
+      },
+      "id": "c9d0e1f2-a3b4-4567-c890-bcdef0123456",
+      "name": "POST Done Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2060, 0]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every Minute": {
+      "main": [[{ "node": "Sign Pending Request", "type": "main", "index": 0 }]]
+    },
+    "Sign Pending Request": {
+      "main": [[{ "node": "GET Pending Mirror", "type": "main", "index": 0 }]]
+    },
+    "GET Pending Mirror": {
+      "main": [[{ "node": "Split Mirror", "type": "main", "index": 0 }]]
+    },
+    "Split Mirror": {
+      "main": [[{ "node": "Upsert Order Row", "type": "main", "index": 0 }]]
+    },
+    "Upsert Order Row": {
+      "main": [[{ "node": "Blank After Group?", "type": "main", "index": 0 }]]
+    },
+    "Blank After Group?": {
+      "main": [
+        [{ "node": "Append Blank Row", "type": "main", "index": 0 }],
+        [{ "node": "Sign Done Callback", "type": "main", "index": 0 }]
+      ]
+    },
+    "Append Blank Row": {
+      "main": [[{ "node": "Sign Done Callback", "type": "main", "index": 0 }]]
+    },
+    "Sign Done Callback": {
+      "main": [[{ "node": "POST Done Callback", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "phase5-sheets-mirror-002",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
